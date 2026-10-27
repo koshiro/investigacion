@@ -1,6 +1,6 @@
 # ADR-0002: Flujos durables con DBOS Transact
 
-Estado: Propuesto (se acepta al pasar el prototipo de la fase 0) · Fecha: 2026-10-27
+Estado: Aceptado · Fecha: 2026-10-27
 
 ## Contexto
 
@@ -16,6 +16,11 @@ para aprobaciones; `DBOS.sleep` para esperas; colas para limitar concurrencia ha
 Criterio de aceptación (fase 0): el flujo `prototipo-fase0` (10 pasos, 30 s de espera durable entre pasos) retoma tras
 `kubectl rollout restart` desde el último paso completo, sin repetir pasos: en `dbos.operation_outputs` cada paso
 aparece una vez y los pasos posteriores al reinicio llevan el nombre del pod nuevo.
+
+Resultado (2026-10-27, imagen `sha-57eb29b`, `investigacion-pg` en el cluster): `rollout restart` tras el paso 4.
+Pasos 1–5 en `prototipo-647f699467-vmzxn` (el 5 alcanzó a correr durante el apagado ordenado), pasos 6–10 en
+`prototipo-7d96c658f4-qbprb`; `dbos.operation_outputs` con 10 `registrar_paso` y 9 `DBOS.sleep`, sin repeticiones;
+la espera de 30 s se respetó a través del reinicio (`recovery_attempts` = 2, estado `SUCCESS`).
 
 ## Alternativas consideradas
 
