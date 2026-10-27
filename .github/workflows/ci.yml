@@ -1,4 +1,4 @@
-q# PR: lint + tipos (aviso) + tests. main y tags v*: además construye y publica ghcr.io/koshiro/investigacion.
+# PR: lint + tipos (aviso) + tests. main y tags v*: además construye y publica ghcr.io/koshiro/investigacion.
 name: CI
 
 on:
