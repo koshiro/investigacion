@@ -67,7 +67,7 @@ dice un borrador). Por eso se mantiene la aprobación humana de todo envío y ex
 ### Ley 20.285 y correo
 
 1. **Plazo de reclamo ante el CPLT.** El artículo 24 dice «quince días» sin «hábiles»; la especificación asume
-   hábiles. Confirmar contra el texto de BCN antes de la fase 3; mientras tanto, las alertas usan el plazo más corto.
+   hábiles. Resuelto en `docs/plazos-ley-20285.md`: se calculan ambas fechas y se alerta por la más temprana.
 2. **Separar estado del proceso y resultado**, como Froide (`froide/foirequest/models/request.py:190-227`: `Status`
    con `awaiting_response`, `awaiting_classification`, `resolved`…, y `Resolution` con `successful`,
    `partially_successful`, `refused`, `not_held`…). Evita estados mezclados como `respondida` → `reclamable`.

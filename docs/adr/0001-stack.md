@@ -37,3 +37,11 @@ Valores por defecto de `app-dev/references/stack.md`, con estas desviaciones:
 - Una imagen liviana (`web`, `worker`, `llm-gateway`, `dispatcher`) y otra pesada para `capture`/`extract`
   (Chromium, docling, torch CPU).
 - Revisar si DBOS no pasa el prototipo de la fase 0 (ADR-0002).
+
+## Decisiones de Daniel (2026-10-27)
+
+- Acceso a `web`: NodePort **30960** (serie 3096x reservada para esta plataforma; LAN y tailnet, sin Ingress).
+- Límite de gasto en la API de Claude: lo fija Daniel en la consola de Anthropic. `llm-gateway` registra tokens y
+  costo por llamada; un tope propio en la plataforma queda opcional.
+- Cuenta Gmail y proyecto de Google Cloud: los prepara Daniel al llegar a la fase 3.
+- Plazos: según el texto legal (`docs/plazos-ley-20285.md`).
