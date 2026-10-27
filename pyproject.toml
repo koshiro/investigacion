@@ -12,6 +12,17 @@ dependencies = [
   "structlog>=26.1",
 ]
 
+[project.optional-dependencies]
+# Solo la imagen de `extract` (sin red): modelos locales de datos personales. torch va en su variante CPU.
+extract = [
+  "presidio-analyzer>=2.2",
+  "gliner>=0.2",
+  "torch>=2.9",
+  "tiktoken>=0.12", # el tokenizador de GLiNER lo pide al convertir el modelo
+  "sentencepiece>=0.2",
+  "protobuf>=6",
+]
+
 [project.scripts]
 # Un solo punto de entrada con subcomandos; el Deployment elige con `args: [...]`.
 investigacion = "investigacion.cli:main"
@@ -26,6 +37,14 @@ dev = [
 [build-system]
 requires = ["uv_build>=0.13,<0.14"]
 build-backend = "uv_build"
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
 
 [tool.uv]
 # Regla de la casa: dependencias con al menos dos semanas publicadas. Mover esta fecha a mano al actualizar el lock.
