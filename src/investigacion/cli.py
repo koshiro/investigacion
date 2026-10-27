@@ -7,7 +7,7 @@ from pathlib import Path
 import psycopg
 import structlog
 
-from investigacion import capture, prototipo
+from investigacion import capture, extract, prototipo
 from investigacion.config import Settings
 
 
@@ -27,6 +27,7 @@ def main(argv: list[str] | None = None) -> None:
     sub = parser.add_subparsers(dest="comando", required=True)
     sub.add_parser("prototipo", help="flujo DBOS de prueba de la fase 0 (sobrevive reinicios)")
     sub.add_parser("capture", help="servicio de capturas: atiende capture_job y descarga por el proxy")
+    sub.add_parser("extract", help="servicio de extracción y redacción (sin red): captura -> texto -> pii_scan")
     sub.add_parser("verificar-capturas", help="recalcula el hash de cada captura contra su fila y la auditoría")
     args = parser.parse_args(argv)
 
@@ -37,6 +38,8 @@ def main(argv: list[str] | None = None) -> None:
         prototipo.esperar_para_siempre()
     elif args.comando == "capture":
         servicio_capture(settings)
+    elif args.comando == "extract":
+        servicio_extract(settings)
     elif args.comando == "verificar-capturas":
         with psycopg.connect(settings.database_url, autocommit=True) as conn:
             problemas = capture.verificar_capturas(conn, Path(settings.evidencia_dir))
@@ -52,6 +55,18 @@ def servicio_capture(settings: Settings) -> None:
     with psycopg.connect(settings.database_url, autocommit=True) as conn:
         while not parar.is_set():
             if capture.procesar_pendientes(conn, descargador, raiz) == 0:
+                parar.wait(settings.captura_intervalo_s)
+
+
+def servicio_extract(settings: Settings) -> None:
+    from investigacion import detectores_ml, redaccion
+
+    detectores = (*redaccion.DETECTORES_DETERMINISTAS, detectores_ml.detector_gliner())
+    raiz = Path(settings.evidencia_dir)
+    parar = threading.Event()
+    with psycopg.connect(settings.database_url, autocommit=True) as conn:
+        while not parar.is_set():
+            if extract.procesar_capturas(conn, raiz, detectores) == 0:
                 parar.wait(settings.captura_intervalo_s)
 
 
