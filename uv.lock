@@ -437,6 +437,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "dbos" },
+    { name = "httpx" },
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "pydantic-settings" },
     { name = "rapidfuzz" },
@@ -465,6 +466,7 @@ dev = [
 requires-dist = [
     { name = "dbos", specifier = ">=3.2" },
     { name = "gliner", marker = "extra == 'extract'", specifier = ">=0.2" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "presidio-analyzer", marker = "extra == 'extract'", specifier = ">=2.2" },
     { name = "protobuf", marker = "extra == 'extract'", specifier = ">=6" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.3" },

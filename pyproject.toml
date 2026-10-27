@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
   "dbos>=3.2",
+  "httpx>=0.28.1",
   "psycopg[binary,pool]>=3.3",
   "pydantic-settings>=2.15",
   "rapidfuzz>=3.14.6",
