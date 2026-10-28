@@ -184,3 +184,14 @@ def leer(
         resumen[r.estado] += 1
     auditoria.registrar(verif, "service:verificador", "citas.verificadas", f"card/{card_id}", resumen)
     return {"card_id": str(card_id), **resumen, "advertencias": ficha.advertencias}
+
+
+def pendientes(conn: psycopg.Connection, limite: int = 20) -> list[str]:
+    """Capturas con extracción, sin ficha y no aisladas (nivel alto espera aprobación)."""
+    filas = conn.execute(
+        "SELECT DISTINCT c.id, c.created_at FROM capture c JOIN extraction e ON e.capture_id = c.id "
+        "JOIN pii_scan p ON p.extraction_id = e.id WHERE p.nivel <> 'alto' AND e.extractor <> 'no-soportado' "
+        "AND NOT EXISTS (SELECT 1 FROM card k WHERE k.capture_id = c.id) ORDER BY c.created_at LIMIT %s",
+        (limite,),
+    ).fetchall()
+    return [str(f[0]) for f in filas]
