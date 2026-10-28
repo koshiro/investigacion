@@ -5,12 +5,15 @@ description = "Investigaciones con datos públicos chilenos: evidencia inmutable
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+  "anthropic>=1.13.0",
   "dbos>=3.2",
+  "fastapi>=0.143.0",
   "httpx>=0.28.1",
   "psycopg[binary,pool]>=3.3",
   "pydantic-settings>=2.15",
   "rapidfuzz>=3.14.6",
   "structlog>=26.1",
+  "uvicorn>=0.54.0",
 ]
 
 [project.optional-dependencies]
