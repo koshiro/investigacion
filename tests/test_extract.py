@@ -126,3 +126,29 @@ def test_hash_del_archivo_no_cambia_al_extraer(pg, tmp_path):
     extract.procesar_capturas(pg.conectar("inv_extract"), tmp_path)
     sha = pg.su.execute("SELECT sha256 FROM capture WHERE id = %s", (cid,)).fetchone()[0]
     assert hashlib.sha256((tmp_path / sha[:2] / sha).read_bytes()).hexdigest() == sha
+
+
+def test_csv_se_redacta_solo_con_detectores_deterministas_y_queda_registrado(pg, tmp_path):
+    llamadas = []
+
+    def nombres(texto):
+        llamadas.append(len(texto))
+        return []
+
+    _captura(pg, tmp_path, b"a;b\npedro@gmail.com;1\n", mime="text/csv", url="https://x.cl/d.csv")
+    _captura(pg, tmp_path, b"Texto libre del acta sin tablas.", mime="text/plain", url="https://x.cl/a.txt")
+    extract.procesar_capturas(pg.conectar("inv_extract"), tmp_path, (*redaccion.DETECTORES_DETERMINISTAS, nombres))
+    versiones = dict(
+        pg.su.execute(
+            "SELECT c.mime, p.version FROM pii_scan p JOIN extraction e ON e.id = p.extraction_id JOIN capture c ON c.id = e.capture_id"
+        ).fetchall()
+    )
+    assert versiones == {"text/csv": f"{redaccion.VERSION}-determinista", "text/plain": redaccion.VERSION}
+    assert len(llamadas) == 1  # el detector de nombres solo vio el texto libre
+    # Lo determinista sigue aplicando: el correo del CSV se redactó.
+    assert (
+        "pedro@gmail.com"
+        not in pg.su.execute(
+            "SELECT texto_redactado FROM pii_scan p JOIN extraction e ON e.id = p.extraction_id JOIN capture c ON c.id = e.capture_id WHERE c.mime = 'text/csv'"
+        ).fetchone()[0]
+    )

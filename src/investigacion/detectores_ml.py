@@ -8,6 +8,7 @@ from investigacion.redaccion import Detector, Hallazgo
 
 MODELO = "urchade/gliner_multi_pii-v1"
 # Etiquetas del modelo (texto libre, en español) → tipo de marcador.
+CHUNK_CARACTERES = 900
 ETIQUETAS = {"persona": "PERSONA", "dirección": "DIRECCION"}
 
 

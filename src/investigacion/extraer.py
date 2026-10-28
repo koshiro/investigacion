@@ -28,6 +28,7 @@ class Extraido:
     paginas: list[PaginaTexto]
     extractor: str
     idioma: str = "es"
+    tabular: bool = False  # filas de datos (CSV): sin modelo de nombres, ver extract.procesar_capturas
 
 
 class NoSoportado(Exception):
