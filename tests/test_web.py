@@ -14,7 +14,7 @@ CLAVE = "k" * 40
 PASSWORD = secrets.token_urlsafe(18)
 OTRA = secrets.token_urlsafe(18)
 NOMBRE = secrets.choice(["daniel"])
-CAMPOS = ("usuario", "password", "codigo")
+CAMPOS = "usuario password codigo".split()
 
 
 def _formulario(*valores):
@@ -69,7 +69,7 @@ def test_login_correcto_crea_sesion_de_12_horas_con_cookie_segura_de_navegador(s
     assert sitio.pg.su.execute("SELECT count(*) FROM web_session WHERE token_hash = %s", (token,)).fetchone()[0] == 0
 
 
-@pytest.mark.parametrize("variante", ["password", "codigo", "usuario"])
+@pytest.mark.parametrize("variante", CAMPOS)
 def test_credenciales_incorrectas_no_entran(sitio, variante):
     datos = _formulario(NOMBRE, PASSWORD, _codigo(sitio))
     datos[variante] = "999999" if variante == "codigo" else OTRA
