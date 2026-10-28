@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block titulo %}Ingresar{% endblock %}
+{% block contenido %}
+<h1>Ingresar</h1>
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+<form method="post" action="/login" class="columna">
+  <label>Usuario <input name="usuario" autocomplete="username" required autofocus></label>
+  <label>Contraseña <input name="password" type="password" autocomplete="current-password" required></label>
+  <label>Código TOTP <input name="codigo" inputmode="numeric" pattern="[0-9 ]{6,7}" autocomplete="one-time-code" required></label>
+  <button type="submit">Entrar</button>
+</form>
+{% endblock %}

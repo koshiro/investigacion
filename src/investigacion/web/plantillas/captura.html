@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block titulo %}Captura {{ c[3][:8] }}{% endblock %}
+{% block contenido %}
+<p><a href="/investigaciones/{{ c[1] }}">← Investigación</a></p>
+<h1>Captura</h1>
+<dl>
+  <dt>URL final</dt><dd><code>{{ c[2] }}</code></dd>
+  <dt>SHA-256</dt><dd><code>{{ c[3] }}</code></dd>
+  <dt>Tipo / tamaño</dt><dd>{{ c[4] }} · {{ "{:,}".format(c[5]).replace(",", ".") }} bytes · HTTP {{ c[7] }}</dd>
+  <dt>Obtenida</dt><dd>{{ c[8].strftime("%Y-%m-%d %H:%M:%S") }} UTC</dd>
+  <dt>Integridad</dt>
+  <dd>
+    <span id="integridad" class="{{ 'ok' if integra else 'alerta' }}">{{ "Íntegra" if integra else "ALTERADA o ausente" }}</span>
+    <form method="post" action="/capturas/{{ c[0] }}/verificar" class="en-linea" hx-post="/capturas/{{ c[0] }}/verificar" hx-target="#integridad" hx-swap="outerHTML">
+      <input type="hidden" name="csrf" value="{{ s.csrf }}"><button type="submit">Recalcular hash</button>
+    </form>
+    · <a href="/capturas/{{ c[0] }}/archivo">Descargar original</a>
+  </dd>
+</dl>
+
+{% if pii and pii[0] == "alto" %}
+<p class="alerta" role="alert">Captura aislada: contiene datos personales de nivel alto (RUN). El lector no la recibe hasta que se apruebe.</p>
+{% endif %}
+
+{% if ext and texto is not none %}
+<h2>Texto extraído <span class="tenue">({{ ext[1] }})</span></h2>
+<p>
+  Versión:
+  <a href="?version=original&pagina={{ pagina }}"{% if version == "original" %} class="activa"{% endif %}>original</a> ·
+  <a href="?version=redactado&pagina={{ pagina }}"{% if version == "redactado" %} class="activa"{% endif %}>redactada (lo que ve el lector)</a>
+  {% if pii %} · datos personales: <strong>{{ pii[0] }}</strong> {% for k, v in pii[1].items() %}{{ k }}={{ v }} {% endfor %}{% endif %}
+</p>
+<p>Página:
+  {% for p in paginas %}{% if p.n == pagina %}<strong>{{ p.n }}</strong>{% else %}<a href="?version={{ version }}&pagina={{ p.n }}">{{ p.n }}</a>{% endif %} {% endfor %}
+</p>
+<pre class="texto">{{ texto }}</pre>
+{% elif not ext %}<p class="tenue">Extracción pendiente.</p>{% endif %}
+
+{% if citas %}
+<h2>Citas</h2>
+<table>
+  <thead><tr><th>Estado</th><th>Página</th><th>Texto citado</th><th>Similitud</th></tr></thead>
+  <tbody>
+  {% for q in citas %}
+    <tr class="cita-{{ q[2] }}"><td>{{ q[2] }}</td><td>{{ q[1] or "" }}</td><td>{{ q[0] }}</td><td>{{ "%.2f"|format(q[4]) if q[4] is not none else "" }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

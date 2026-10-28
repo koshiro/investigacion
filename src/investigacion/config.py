@@ -29,3 +29,8 @@ class Settings(BaseSettings):
 
     # El lector escribe citas con el rol worker y las verifica con el rol verificador (credenciales distintas).
     verificador_database_url: str = ""
+
+    # web: clave para tokens CSRF, secreto TOTP del único usuario (ambos del Secret) y cookie Secure (solo con HTTPS).
+    web_clave: str = ""
+    web_totp_secreto: str = ""
+    web_cookie_segura: bool = False

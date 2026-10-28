@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block titulo %}{{ inv[1] }}{% endblock %}
+{% block contenido %}
+<h1>{{ inv[1] }}</h1>
+<p>{{ inv[2] }}</p>
+<p class="tenue">{{ inv[4] or "" }} {{ inv[3] or "" }} · {{ inv[5] }}</p>
+
+<h2>Capturar una URL</h2>
+<form method="post" action="/investigaciones/{{ inv[0] }}/capturar" class="en-fila">
+  <input type="hidden" name="csrf" value="{{ s.csrf }}">
+  <input name="url" type="url" maxlength="2000" placeholder="https://…" required>
+  <button type="submit">Capturar</button>
+</form>
+<p class="tenue">Solo dominios de la lista blanca del proxy; otros fallan con 403.</p>
+
+{% if trabajos %}
+<h2>En cola</h2>
+<div hx-get="/investigaciones/{{ inv[0] }}" hx-trigger="every 5s" hx-select="#cola" hx-target="#cola" hx-swap="outerHTML">
+<ul id="cola">
+{% for t in trabajos %}<li><code>{{ t[0] }}</code> — {{ t[1] }}{% if t[2] %}: {{ t[2] }}{% endif %}</li>{% endfor %}
+</ul></div>
+{% endif %}
+
+<h2>Capturas</h2>
+{% if capturas %}
+<table>
+  <thead><tr><th>URL</th><th>Tipo</th><th>Tamaño</th><th>SHA-256</th><th>Fecha</th><th>Datos personales</th></tr></thead>
+  <tbody>
+  {% for c in capturas %}
+    <tr>
+      <td><a href="/capturas/{{ c[0] }}">{{ c[1] }}</a></td><td>{{ c[2] }}</td><td>{{ "{:,}".format(c[3]).replace(",", ".") }}</td>
+      <td><code>{{ c[4][:12] }}…</code></td><td>{{ c[5].strftime("%Y-%m-%d %H:%M") }}</td>
+      <td>{% if c[6] == "alto" %}<span class="alerta">aislada (alto)</span>{% else %}{{ c[6] or "pendiente" }}{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p>Sin capturas todavía.</p>{% endif %}
+{% endblock %}
