@@ -17,13 +17,15 @@ RUN /app/.venv/bin/docling-tools models download --output-dir /models/docling la
 FROM python:3.14-slim-trixie
 RUN apt-get update \
  && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-spa libgl1 libglib2.0-0 \
+ && (apt-get install -y --no-install-recommends libmimalloc3 || apt-get install -y --no-install-recommends libmimalloc2.0) \
+ && ln -s "$(ls /usr/lib/*/libmimalloc.so.* | head -1)" /usr/local/lib/libmimalloc.so \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd -g 1000 app && useradd -u 1000 -g 1000 -M -d /nonexistent -s /usr/sbin/nologin app
 COPY --from=build --chown=1000:1000 /app/.venv /app/.venv
 COPY --from=build --chown=1000:1000 /models /models
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 TZ=America/Santiago \
     HF_HOME=/models/hf HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 DOCLING_ARTIFACTS_PATH=/models/docling \
-    OMP_NUM_THREADS=2
+    OMP_NUM_THREADS=2 LD_PRELOAD=/usr/local/lib/libmimalloc.so
 WORKDIR /app
 USER 1000:1000
 ENTRYPOINT ["investigacion"]
