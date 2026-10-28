@@ -111,23 +111,61 @@ def extraer_html(datos: bytes) -> Extraido:
     return extraer_texto("\n".join(linea for linea in lineas if linea).encode())
 
 
-def extraer_pdf(datos: bytes, ocr: bool = True) -> Extraido:  # pragma: no cover - requiere el extra `extract`
-    from docling.datamodel.base_models import DocumentStream, InputFormat
+MIN_CARACTERES_PAGINA = 80  # una página con menos texto que esto se considera sin capa de texto → OCR
+
+
+def _rangos(paginas: list[int]) -> list[tuple[int, int]]:
+    """[2, 3, 4, 9] → [(2, 4), (9, 9)]"""
+    rangos: list[tuple[int, int]] = []
+    for n in sorted(paginas):
+        if rangos and n == rangos[-1][1] + 1:
+            rangos[-1] = (rangos[-1][0], n)
+        else:
+            rangos.append((n, n))
+    return rangos
+
+
+def _conversor(ocr: bool):  # pragma: no cover - requiere el extra `extract`
+    from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions, TesseractCliOcrOptions
     from docling.document_converter import DocumentConverter, PdfFormatOption
 
     opciones = PdfPipelineOptions(
         do_ocr=ocr,
-        ocr_options=TesseractCliOcrOptions(lang=["spa"]),
-        document_timeout=600,
+        ocr_options=TesseractCliOcrOptions(lang=["spa"], scale=2.0),
+        document_timeout=900,
         enable_remote_services=False,
+        # Lotes de 1: acota la memoria (el pod tiene 4 GiB y comparte nodo).
+        layout_batch_size=1,
+        table_batch_size=1,
+        ocr_batch_size=1,
     )
-    conversor = DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opciones)})
-    resultado = conversor.convert(DocumentStream(name="captura.pdf", stream=io.BytesIO(datos)))
-    doc = resultado.document
-    textos = [doc.export_to_text(page_no=n) for n in sorted(doc.pages)]
-    e = unir_paginas(textos)
-    return Extraido(e.texto, e.paginas, "docling+tesseract-spa")
+    return DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opciones)})
+
+
+def extraer_pdf(datos: bytes, ocr: bool = True) -> Extraido:  # pragma: no cover - requiere el extra `extract`
+    """Texto primero, OCR solo donde falta. Medido con un PDF real de 65 páginas e imágenes: el OCR de todas las
+    imágenes incrustadas (docling por defecto) lo hacía inviable; sin OCR tarda 151 s."""
+    from docling.datamodel.base_models import DocumentStream
+
+    def fuente() -> DocumentStream:
+        return DocumentStream(name="captura.pdf", stream=io.BytesIO(datos))
+
+    doc = _conversor(ocr=False).convert(fuente()).document
+    textos = {n: doc.export_to_text(page_no=n) for n in sorted(doc.pages)}
+    extractor = "docling"
+    if ocr:
+        escasas = [n for n, t in textos.items() if len(t.strip()) < MIN_CARACTERES_PAGINA]
+        if escasas:
+            extractor = "docling+tesseract-spa"
+            conversor_ocr = _conversor(ocr=True)
+            for ini, fin in _rangos(escasas):
+                parcial = conversor_ocr.convert(fuente(), page_range=(ini, fin)).document
+                for n in parcial.pages:
+                    if n in textos and (t := parcial.export_to_text(page_no=n)).strip():
+                        textos[n] = t
+    e = unir_paginas([textos[n] for n in sorted(textos)])
+    return Extraido(e.texto, e.paginas, extractor)
 
 
 def extraer(mime: str, datos: bytes, url: str = "") -> Extraido:

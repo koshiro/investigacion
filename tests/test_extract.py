@@ -152,3 +152,21 @@ def test_csv_se_redacta_solo_con_detectores_deterministas_y_queda_registrado(pg,
             "SELECT texto_redactado FROM pii_scan p JOIN extraction e ON e.id = p.extraction_id JOIN capture c ON c.id = e.capture_id WHERE c.mime = 'text/csv'"
         ).fetchone()[0]
     )
+
+
+def test_mismo_archivo_en_dos_capturas_se_extrae_una_vez_y_se_copia(pg, tmp_path):
+    llamadas = []
+
+    def contador(mime, datos, url):
+        llamadas.append(url)
+        return extraer.extraer(mime, datos, url)
+
+    _captura(pg, tmp_path, TEXTO.encode())
+    _captura(pg, tmp_path, TEXTO.encode(), url="https://otra.cl/mismo.txt")  # mismo contenido → mismo SHA-256
+    c = pg.conectar("inv_extract")
+    assert extract.procesar_capturas(c, tmp_path, extractor=contador) == 2
+    assert len(llamadas) == 1
+    assert pg.su.execute("SELECT count(*) FROM extraction").fetchone()[0] == 2
+    assert pg.su.execute("SELECT count(DISTINCT texto_redactado) FROM pii_scan").fetchone()[0] == 1
+    assert pg.su.execute("SELECT count(*) FROM audit_log WHERE accion = 'extract.reutilizar'").fetchone()[0] == 1
+    assert auditoria.verificar(pg.su).ok

@@ -19,6 +19,35 @@ ACTOR = "service:extract"
 _AVISADAS: set = set()
 
 
+def _reutilizar(conn: psycopg.Connection, cid, sha: str) -> bool:
+    """Mismo archivo (mismo SHA-256) ya extraído en otra captura: copia el resultado en vez de repetir el trabajo.
+    Las filas se insertan nuevas (nada se modifica); el hash ya se verificó cuando se extrajo la primera vez."""
+    previa = conn.execute(
+        "SELECT e.id, e.extractor, e.idioma, e.texto, e.paginas, p.version, p.hallazgos, p.nivel, p.texto_redactado, "
+        "p.mapa, p.paginas_redactadas FROM extraction e JOIN pii_scan p ON p.extraction_id = e.id "
+        "JOIN capture c ON c.id = e.capture_id WHERE c.sha256 = %s AND c.id <> %s ORDER BY e.created_at LIMIT 1",
+        (sha, cid),
+    ).fetchone()
+    if previa is None:
+        return False
+    with conn.transaction():
+        eid = conn.execute(
+            "INSERT INTO extraction (created_by, capture_id, extractor, idioma, texto, paginas) "
+            "VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
+            (ACTOR, cid, previa[1], previa[2], previa[3], Jsonb(previa[4])),
+        ).fetchone()[0]  # type: ignore[index]
+        conn.execute(
+            "INSERT INTO pii_scan (created_by, extraction_id, version, hallazgos, nivel, texto_redactado, mapa, "
+            "paginas_redactadas) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+            (ACTOR, eid, previa[5], Jsonb(previa[6]), previa[7], previa[8], Jsonb(previa[9]), Jsonb(previa[10])),
+        )
+        auditoria.registrar(
+            conn, ACTOR, "extract.reutilizar", f"extraction/{eid}", {"capture": str(cid), "copiada_de": str(previa[0])}
+        )
+    log.info("extracción reutilizada", capture=str(cid), sha256=sha)
+    return True
+
+
 def procesar_capturas(
     conn: psycopg.Connection,
     raiz: Path,
@@ -34,6 +63,9 @@ def procesar_capturas(
     hechas = 0
     avisadas = _AVISADAS
     for cid, sha, mime, url in pendientes:
+        if _reutilizar(conn, cid, sha):
+            hechas += 1
+            continue
         try:
             archivo = evidencia.ruta_absoluta(raiz, sha)
             if evidencia.hash_archivo(archivo) != sha:  # no se procesa evidencia alterada
