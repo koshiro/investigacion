@@ -14,7 +14,7 @@ CLAVE = "k" * 40
 PASSWORD = secrets.token_urlsafe(18)
 OTRA = secrets.token_urlsafe(18)
 NOMBRE = secrets.choice(["daniel"])
-CAMPOS = "usuario password codigo".split()
+CAMPOS = ["usuario", "password", "codigo"]
 
 
 def _formulario(*valores):
