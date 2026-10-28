@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block titulo %}Auditoría{% endblock %}
+{% block contenido %}
+<h1>Auditoría</h1>
+<p>
+  Cadena de hashes:
+  {% if cadena.ok %}<span class="ok">válida</span> — {{ cadena.filas }} entradas, hash final <code>{{ cadena.hash_final[:16] }}…</code>
+  {% else %}<span class="alerta">ROTA en la entrada {{ cadena.primera_rota }}: {{ cadena.motivo }}</span>{% endif %}
+</p>
+<p>
+  Capturas:
+  {% if not problemas %}<span class="ok">todas íntegras</span>
+  {% else %}<span class="alerta">{{ problemas|length }} con problemas</span>
+  <ul>{% for p in problemas %}<li><a href="/capturas/{{ p.capture_id }}">{{ p.capture_id }}</a>: {{ p.motivo }}</li>{% endfor %}</ul>{% endif %}
+</p>
+<table>
+  <thead><tr><th>#</th><th>Fecha (UTC)</th><th>Actor</th><th>Acción</th><th>Objeto</th></tr></thead>
+  <tbody>{% for u in ultimas %}<tr><td>{{ u[0] }}</td><td>{{ u[1].strftime("%Y-%m-%d %H:%M:%S") }}</td><td>{{ u[2] }}</td><td>{{ u[3] }}</td><td><code>{{ u[4] }}</code></td></tr>{% endfor %}</tbody>
+</table>
+{% endblock %}

@@ -32,9 +32,14 @@ def main(argv: list[str] | None = None) -> None:
         "llm-gateway", help="único cliente de la API de Claude (redacción previa, registro, sin herramientas)"
     )
     p_lector = sub.add_parser("lector", help="lee una captura con el agente lector y verifica sus citas")
-    p_lector.add_argument("capture_id")
+    p_lector.add_argument("capture_id", nargs="?")
+    p_lector.add_argument("--pendientes", action="store_true", help="todas las capturas sin ficha y no aisladas")
     p_lector.add_argument("--estrategia", choices=["json", "citas"], default="json")
     sub.add_parser("eval-lector", help="compara las dos estrategias del lector con la API real (cuesta centavos)")
+    sub.add_parser("web", help="interfaz web (NodePort 30960): login con argon2 + TOTP, investigaciones y visor")
+    p_usuario = sub.add_parser("crear-usuario", help="crea el usuario único; imprime el secreto TOTP una sola vez")
+    p_usuario.add_argument("nombre")
+    sub.add_parser("migrar", help="aplica las migraciones SQL pendientes (con el rol dueño de la base)")
     sub.add_parser("verificar-capturas", help="recalcula el hash de cada captura contra su fila y la auditoría")
     args = parser.parse_args(argv)
 
@@ -55,9 +60,22 @@ def main(argv: list[str] | None = None) -> None:
             psycopg.connect(settings.database_url, autocommit=True) as w,
             psycopg.connect(settings.verificador_database_url or settings.database_url, autocommit=True) as v,
         ):
-            sys.stdout.write(f"{lector.leer(w, v, gw, args.capture_id, args.estrategia)}\n")
+            ids = lector.pendientes(w) if args.pendientes else [args.capture_id]
+            if not ids or ids == [None]:
+                raise SystemExit("indica un capture_id o --pendientes")
+            for cid in ids:
+                sys.stdout.write(f"{cid}: {lector.leer(w, v, gw, cid, args.estrategia)}\n")
     elif args.comando == "eval-lector":
         evaluar_lector(settings)
+    elif args.comando == "web":
+        servicio_web(settings)
+    elif args.comando == "crear-usuario":
+        crear_usuario(settings, args.nombre)
+    elif args.comando == "migrar":
+        from investigacion import db
+
+        with psycopg.connect(settings.database_url) as conn:
+            sys.stdout.write(f"migraciones aplicadas: {db.migrar(conn) or 'ninguna pendiente'}\n")
     elif args.comando == "verificar-capturas":
         with psycopg.connect(settings.database_url, autocommit=True) as conn:
             problemas = capture.verificar_capturas(conn, Path(settings.evidencia_dir))
@@ -108,6 +126,45 @@ def evaluar_lector(settings: Settings) -> None:
         gw = _gateway(settings, conn)
         for estrategia in ("json", "citas"):
             sys.stdout.write(eval_lector.evaluar(gw, estrategia).resumen() + "\n")
+
+
+def servicio_web(settings: Settings) -> None:
+    import uvicorn
+
+    from investigacion import web
+
+    if len(settings.web_clave) < 32 or not settings.web_totp_secreto:
+        raise SystemExit("web exige INVESTIGACION_WEB_CLAVE (>= 32 caracteres) e INVESTIGACION_WEB_TOTP_SECRETO")
+    cfg = web.Configuracion(
+        lambda: psycopg.connect(settings.database_url, autocommit=True),
+        Path(settings.evidencia_dir),
+        settings.web_clave,
+        settings.web_totp_secreto,
+        settings.web_cookie_segura,
+    )
+    uvicorn.run(web.crear_app(cfg), host="0.0.0.0", port=8000, log_config=None)  # noqa: S104  (NodePort, LAN/tailnet)
+
+
+def crear_usuario(settings: Settings, nombre: str) -> None:
+    """Con el rol dueño de la base (no el de `web`). La contraseña sale de INVESTIGACION_NUEVA_PASSWORD o se pide."""
+    import getpass
+    import os
+
+    import pyotp
+
+    from investigacion.web import auth
+
+    password = os.environ.get("INVESTIGACION_NUEVA_PASSWORD") or getpass.getpass("Contraseña (>= 14 caracteres): ")
+    if len(password) < 14:
+        raise SystemExit("la contraseña debe tener al menos 14 caracteres")
+    secreto = pyotp.random_base32()
+    with psycopg.connect(settings.database_url, autocommit=True) as conn:
+        conn.execute(
+            "INSERT INTO app_user (created_by, nombre, password_hash) VALUES ('daniel', %s, %s)",
+            (nombre, auth.hashear(password)),
+        )
+    sys.stdout.write(f"INVESTIGACION_WEB_TOTP_SECRETO={secreto}\n")
+    sys.stdout.write(f"{pyotp.TOTP(secreto).provisioning_uri(name=nombre, issuer_name='Investigación')}\n")
 
 
 if __name__ == "__main__":

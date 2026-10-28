@@ -1,0 +1,16 @@
+:root { color-scheme: light dark; --ok: #1a7f37; --mal: #b42318; --borde: #8884; }
+body { font: 16px/1.5 system-ui, sans-serif; margin: 0; }
+header { display: flex; gap: 1rem; align-items: center; padding: .6rem 1rem; border-bottom: 1px solid var(--borde); }
+header .marca { font-weight: 700; text-decoration: none; }
+nav { display: flex; gap: 1rem; align-items: center; margin-left: auto; }
+main { max-width: 70rem; margin: 1rem auto; padding: 0 1rem; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--borde); vertical-align: top; }
+.columna { display: flex; flex-direction: column; gap: .6rem; max-width: 32rem; }
+.columna label { display: flex; flex-direction: column; gap: .2rem; }
+.en-fila { display: flex; gap: .5rem; } .en-fila input { flex: 1; }
+.en-linea { display: inline; }
+.ok { color: var(--ok); font-weight: 600; } .alerta { color: var(--mal); font-weight: 600; } .error { color: var(--mal); }
+.tenue { opacity: .7; } .activa { font-weight: 700; }
+pre.texto { white-space: pre-wrap; word-break: break-word; border: 1px solid var(--borde); padding: .75rem; max-height: 60vh; overflow: auto; }
+.cita-verificada td:first-child { color: var(--ok); } .cita-fallida td:first-child { color: var(--mal); } .cita-revisar td:first-child { color: #9a6700; }
