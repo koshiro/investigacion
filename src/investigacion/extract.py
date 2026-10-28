@@ -49,7 +49,11 @@ def procesar_capturas(
                 auditoria.registrar(conn, ACTOR, "extract.fallo", f"capture/{cid}", {"error": str(err)[:300]})
             log.warning("extracción fallida", capture=str(cid), error=str(err))
             continue
-        red = redaccion.redactar(e.texto, detectores)
+        # Los datos tabulares (CSV de millones de caracteres) se redactan solo con los detectores deterministas: el
+        # modelo de nombres corre a ~1 KB/s por CPU y tardaría horas. Queda registrado en la versión del escaneo.
+        det = redaccion.DETECTORES_DETERMINISTAS if e.tabular else detectores
+        version = redaccion.VERSION + ("-determinista" if det is not detectores else "")
+        red = redaccion.redactar(e.texto, det)
         paginas_orig = [{"n": p.n, "inicio": p.inicio, "fin": p.fin} for p in e.paginas]
         paginas_red = [
             {
@@ -71,7 +75,7 @@ def procesar_capturas(
                 (
                     ACTOR,
                     eid,
-                    redaccion.VERSION,
+                    version,
                     Jsonb(red.hallazgos),
                     red.nivel,
                     red.texto,

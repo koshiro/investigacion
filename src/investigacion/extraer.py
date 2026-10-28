@@ -28,6 +28,7 @@ class Extraido:
     paginas: list[PaginaTexto]
     extractor: str
     idioma: str = "es"
+    tabular: bool = False  # filas de datos (CSV): sin modelo de nombres, ver extract.procesar_capturas
 
 
 class NoSoportado(Exception):
@@ -67,9 +68,10 @@ def extraer_csv(datos: bytes) -> Extraido:
     except csv.Error:
         dialecto = csv.excel
     filas = [" | ".join(c.strip() for c in fila) for fila in csv.reader(io.StringIO(texto), dialecto)]
-    return unir_paginas(
+    e = unir_paginas(
         ["\n".join(filas[i : i + LINEAS_POR_PAGINA]) for i in range(0, len(filas), LINEAS_POR_PAGINA)] or [""]
     )
+    return Extraido(e.texto, e.paginas, e.extractor, tabular=True)
 
 
 class _HtmlATexto(HTMLParser):
