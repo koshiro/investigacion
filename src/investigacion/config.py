@@ -18,3 +18,14 @@ class Settings(BaseSettings):
     # Prototipo de la fase 0: cuántos pasos y cuánto duerme (durable) entre pasos.
     prototipo_pasos: int = 10
     prototipo_espera_s: float = 30.0
+
+    # llm-gateway: único con la clave de la API; sale solo por el proxy (usuario llm-gateway).
+    anthropic_api_key: str = ""
+    modelo_lector: str = "claude-haiku-5-5"
+    # Tope propio opcional por mes (USD). Daniel fija el límite duro en la consola de Anthropic.
+    tope_mensual_usd: float | None = None
+    # worker/lector: dónde está el gateway (Service interno).
+    gateway_url: str = "http://llm-gateway:8080"
+
+    # El lector escribe citas con el rol worker y las verifica con el rol verificador (credenciales distintas).
+    verificador_database_url: str = ""
