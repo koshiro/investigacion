@@ -6,6 +6,7 @@ rangos [inicio, fin) de ese texto: el verificador de citas y el visor trabajan c
 """
 
 import csv
+import functools
 import io
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -125,7 +126,9 @@ def _rangos(paginas: list[int]) -> list[tuple[int, int]]:
     return rangos
 
 
+@functools.cache
 def _conversor(ocr: bool):  # pragma: no cover - requiere el extra `extract`
+    """Uno por modo y por proceso: un DocumentConverter nuevo por PDF recargaba los modelos y agotaba la memoria."""
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions, TesseractCliOcrOptions
     from docling.document_converter import DocumentConverter, PdfFormatOption
