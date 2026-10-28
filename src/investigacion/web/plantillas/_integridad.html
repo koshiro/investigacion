@@ -1,0 +1,4 @@
+<span id="integridad" class="{{ 'ok' if integra else 'alerta' }}">
+  {% if integra %}Íntegra: el hash recalculado coincide con <code>{{ sha[:16] }}…</code>.
+  {% else %}ALTERADA o ausente: el archivo no coincide con su hash.{% endif %}
+</span>

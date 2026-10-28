@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block titulo %}Investigación{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+<header>
+  <a href="/" class="marca">Investigación</a>
+  {% if s %}
+  <nav>
+    <a href="/">Investigaciones</a>
+    <a href="/auditoria">Auditoría</a>
+    <form method="post" action="/logout" class="en-linea">
+      <input type="hidden" name="csrf" value="{{ s.csrf }}">
+      <button type="submit">Salir ({{ s.nombre }})</button>
+    </form>
+  </nav>
+  {% endif %}
+</header>
+<main>{% block contenido %}{% endblock %}</main>
+</body>
+</html>
