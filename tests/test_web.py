@@ -220,3 +220,23 @@ def test_captura_aislada_se_muestra_con_aviso(sitio):
     _entrar(sitio)
     pagina = sitio.c.get(f"/capturas/{cid}").text
     assert "Captura aislada" in pagina
+
+
+def test_crear_usuario_usa_el_totp_del_secret_y_permite_entrar(sitio, monkeypatch, capsys):
+    from investigacion import cli
+    from investigacion.config import Settings
+
+    sitio.pg.su.execute("DELETE FROM app_user")
+    nueva = secrets.token_urlsafe(18)
+    monkeypatch.setenv("INVESTIGACION_NUEVA_PASSWORD", nueva)
+    cli.crear_usuario(Settings(database_url=sitio.pg.url, web_totp_secreto=sitio.secreto), NOMBRE)
+    assert sitio.secreto in capsys.readouterr().out  # el URI de aprovisionamiento lleva el secreto del Secret
+    assert _login(sitio, password=nueva).status_code == 303
+
+
+def test_crear_usuario_sin_totp_configurado_falla(sitio):
+    from investigacion import cli
+    from investigacion.config import Settings
+
+    with pytest.raises(SystemExit):
+        cli.crear_usuario(Settings(database_url=sitio.pg.url), NOMBRE)

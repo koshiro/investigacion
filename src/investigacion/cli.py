@@ -146,7 +146,7 @@ def servicio_web(settings: Settings) -> None:
 
 
 def crear_usuario(settings: Settings, nombre: str) -> None:
-    """Con el rol dueño de la base (no el de `web`). La contraseña sale de INVESTIGACION_NUEVA_PASSWORD o se pide."""
+    """Con el rol dueño de la base. Contraseña: INVESTIGACION_NUEVA_PASSWORD o se pide. El TOTP es el del Secret."""
     import getpass
     import os
 
@@ -154,17 +154,19 @@ def crear_usuario(settings: Settings, nombre: str) -> None:
 
     from investigacion.web import auth
 
+    if not settings.web_totp_secreto:
+        raise SystemExit("falta INVESTIGACION_WEB_TOTP_SECRETO (Secret web-secreto): el TOTP debe ser el que usa web")
     password = os.environ.get("INVESTIGACION_NUEVA_PASSWORD") or getpass.getpass("Contraseña (>= 14 caracteres): ")
     if len(password) < 14:
         raise SystemExit("la contraseña debe tener al menos 14 caracteres")
-    secreto = pyotp.random_base32()
     with psycopg.connect(settings.database_url, autocommit=True) as conn:
         conn.execute(
-            "INSERT INTO app_user (created_by, nombre, password_hash) VALUES ('daniel', %s, %s)",
+            "INSERT INTO app_user (created_by, nombre, password_hash) VALUES ('daniel', %s, %s) "
+            "ON CONFLICT (nombre) DO UPDATE SET password_hash = EXCLUDED.password_hash, totp_ultimo_paso = 0",
             (nombre, auth.hashear(password)),
         )
-    sys.stdout.write(f"INVESTIGACION_WEB_TOTP_SECRETO={secreto}\n")
-    sys.stdout.write(f"{pyotp.TOTP(secreto).provisioning_uri(name=nombre, issuer_name='Investigación')}\n")
+    uri = pyotp.TOTP(settings.web_totp_secreto).provisioning_uri(name=nombre, issuer_name="Investigación")
+    sys.stdout.write(f"Usuario {nombre} listo. Agrega este TOTP a tu app de autenticación:\n{uri}\n")
 
 
 if __name__ == "__main__":
