@@ -24,6 +24,7 @@ dependencies = [
 [project.optional-dependencies]
 # Solo la imagen de `extract` (sin red): modelos locales de datos personales. torch va en su variante CPU.
 extract = [
+  "pypdfium2>=4.30", # texto nativo de PDF y rasterizado para OCR
   "presidio-analyzer>=2.2",
   "gliner>=0.2",
   "torch>=2.9",
@@ -40,6 +41,8 @@ investigacion = "investigacion.cli:main"
 
 [dependency-groups]
 dev = [
+  "fpdf2>=2.8", # PDF de prueba
+  "pypdfium2>=4.30",
   "pytest>=9.1",
   "ruff>=0.17,<0.18", # tope de menor: las versiones menores cambian las reglas por defecto
   "ty>=0.0.80",

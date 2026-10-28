@@ -8,6 +8,8 @@ rangos [inicio, fin) de ese texto: el verificador de citas y el visor trabajan c
 import csv
 import functools
 import io
+import os
+import shutil
 from dataclasses import dataclass
 from html.parser import HTMLParser
 
@@ -113,32 +115,87 @@ def extraer_html(datos: bytes) -> Extraido:
 
 
 MIN_CARACTERES_PAGINA = 80  # una página con menos texto que esto se considera sin capa de texto → OCR
+ESCALA_OCR = 2.5  # píxeles por punto al rasterizar una página para Tesseract (~180 dpi)
+TIMEOUT_OCR_S = 180
 
 
-def _rangos(paginas: list[int]) -> list[tuple[int, int]]:
-    """[2, 3, 4, 9] → [(2, 4), (9, 9)]"""
-    rangos: list[tuple[int, int]] = []
-    for n in sorted(paginas):
-        if rangos and n == rangos[-1][1] + 1:
-            rangos[-1] = (rangos[-1][0], n)
-        else:
-            rangos.append((n, n))
-    return rangos
+def _ocr_pagina(pagina) -> str:  # pragma: no cover - requiere el binario tesseract
+    """Rasteriza una página (pypdfium2) y la pasa por Tesseract en español. Una página por vez: memoria acotada."""
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory(prefix="ocr-") as d:
+        imagen = Path(d) / "pagina.png"
+        pagina.render(scale=ESCALA_OCR).to_pil().convert("L").save(imagen)
+        r = subprocess.run(  # noqa: S603  (argumentos fijos; la ruta es de un directorio temporal propio)
+            ["tesseract", str(imagen), "stdout", "-l", "spa", "--psm", "3"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT_OCR_S,
+            check=True,
+        )
+    return r.stdout
+
+
+def extraer_pdf(datos: bytes, ocr: bool = True) -> Extraido:
+    """Texto nativo del PDF (pypdfium2) y OCR solo en las páginas sin capa de texto.
+
+    Por qué no docling como motor principal (medido el 2026-10-28 con un PDF real de 9 páginas y 175 KB, la
+    «Programación Financiera» de SERVIU): convertido entero superaba los 3 GiB y el pod moría por OOM; convertido
+    página por página bajaba a 1,27 GiB pero entregaba `[96, 0, 11269, 12541, 0, …]` caracteres por página frente a
+    `[3959, 3725, 5053, 5704, 3058, …]` del texto nativo: páginas completas casi vacías, o sea evidencia perdida sin
+    aviso. El texto nativo es completo, tarda milisegundos y no usa modelos. docling queda como opción
+    (`INVESTIGACION_PDF_MOTOR=docling`) para estructura de tablas; ver docs/adr/0003-extraccion-pdf.md.
+    """
+    import pypdfium2
+
+    pdf = pypdfium2.PdfDocument(datos)
+    textos: dict[int, str] = {}
+    escasas: list[int] = []
+    try:
+        for i in range(len(pdf)):
+            pagina = pdf[i]
+            try:
+                tp = pagina.get_textpage()
+                try:
+                    texto = tp.get_text_range().replace("\r\n", "\n").replace("\r", "\n")
+                finally:
+                    tp.close()
+            finally:
+                pagina.close()
+            textos[i + 1] = texto
+            if len(texto.strip()) < MIN_CARACTERES_PAGINA:
+                escasas.append(i + 1)
+        extractor = "pdfium"
+        if ocr and escasas and shutil.which("tesseract"):
+            extractor = "pdfium+tesseract-spa"
+            for n in escasas:
+                pagina = pdf[n - 1]
+                try:
+                    if (t := _ocr_pagina(pagina)).strip():
+                        textos[n] = t
+                finally:
+                    pagina.close()
+    finally:
+        pdf.close()
+    e = unir_paginas([textos[n] for n in sorted(textos)])
+    return Extraido(e.texto, e.paginas, extractor)
 
 
 @functools.cache
 def _conversor(ocr: bool):  # pragma: no cover - requiere el extra `extract`
-    """Uno por modo y por proceso: un DocumentConverter nuevo por PDF recargaba los modelos y agotaba la memoria."""
+    """Uno por modo y por proceso (un DocumentConverter por PDF recargaba los modelos y agotaba la memoria)."""
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions, TesseractCliOcrOptions
     from docling.document_converter import DocumentConverter, PdfFormatOption
 
     opciones = PdfPipelineOptions(
         do_ocr=ocr,
+        do_table_structure=False,
         ocr_options=TesseractCliOcrOptions(lang=["spa"], scale=2.0),
         document_timeout=900,
         enable_remote_services=False,
-        # Lotes de 1: acota la memoria (el pod tiene 4 GiB y comparte nodo).
         layout_batch_size=1,
         table_batch_size=1,
         ocr_batch_size=1,
@@ -146,27 +203,27 @@ def _conversor(ocr: bool):  # pragma: no cover - requiere el extra `extract`
     return DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opciones)})
 
 
-def extraer_pdf(datos: bytes, ocr: bool = True) -> Extraido:  # pragma: no cover - requiere el extra `extract`
-    """Texto primero, OCR solo donde falta. Medido con un PDF real de 65 páginas e imágenes: el OCR de todas las
-    imágenes incrustadas (docling por defecto) lo hacía inviable; sin OCR tarda 151 s."""
+def extraer_pdf_docling(datos: bytes, ocr: bool = True) -> Extraido:  # pragma: no cover - requiere el extra `extract`
+    """Motor opcional (INVESTIGACION_PDF_MOTOR=docling): layout con docling, SIEMPRE una página por conversión (el
+    documento entero superaba los 3 GiB). Ojo: puede dejar páginas casi vacías; comparar con el texto nativo."""
+    import pypdfium2
     from docling.datamodel.base_models import DocumentStream
 
-    def fuente() -> DocumentStream:
-        return DocumentStream(name="captura.pdf", stream=io.BytesIO(datos))
+    def pagina(conversor, n: int) -> str:
+        fuente = DocumentStream(name="captura.pdf", stream=io.BytesIO(datos))
+        return conversor.convert(fuente, page_range=(n, n)).document.export_to_text(page_no=n)
 
-    doc = _conversor(ocr=False).convert(fuente()).document
-    textos = {n: doc.export_to_text(page_no=n) for n in sorted(doc.pages)}
+    total = len(pypdfium2.PdfDocument(datos))
+    sin_ocr = _conversor(ocr=False)
+    textos = {n: pagina(sin_ocr, n) for n in range(1, total + 1)}
     extractor = "docling"
-    if ocr:
-        escasas = [n for n, t in textos.items() if len(t.strip()) < MIN_CARACTERES_PAGINA]
-        if escasas:
-            extractor = "docling+tesseract-spa"
-            conversor_ocr = _conversor(ocr=True)
-            for ini, fin in _rangos(escasas):
-                parcial = conversor_ocr.convert(fuente(), page_range=(ini, fin)).document
-                for n in parcial.pages:
-                    if n in textos and (t := parcial.export_to_text(page_no=n)).strip():
-                        textos[n] = t
+    escasas = [n for n, t in textos.items() if ocr and len(t.strip()) < MIN_CARACTERES_PAGINA]
+    if escasas:
+        extractor = "docling+tesseract-spa"
+        con_ocr = _conversor(ocr=True)
+        for n in escasas:
+            if (t := pagina(con_ocr, n)).strip():
+                textos[n] = t
     e = unir_paginas([textos[n] for n in sorted(textos)])
     return Extraido(e.texto, e.paginas, extractor)
 
@@ -175,7 +232,9 @@ def extraer(mime: str, datos: bytes, url: str = "") -> Extraido:
     if mime in ("application/octet-stream", "") and url.lower().split("?")[0].endswith(".csv"):
         mime = "text/csv"
     if mime == "application/pdf":
-        return extraer_pdf(datos)
+        return (
+            extraer_pdf_docling(datos) if os.environ.get("INVESTIGACION_PDF_MOTOR") == "docling" else extraer_pdf(datos)
+        )
     if mime in ("text/csv", "application/csv", "application/vnd.ms-excel") or mime.endswith("csv"):
         return extraer_csv(datos)
     if mime in ("text/html", "application/xhtml+xml"):
