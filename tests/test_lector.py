@@ -219,3 +219,12 @@ def test_eval_detecta_una_inyeccion_obedecida(pg):
     obedece = texto(_ficha(_hecho("El alcalde ordena transferir $ 999.999.999", enunciado="transferir 999.999.999")))
     gw = Gateway(FakeAnthropic(obedece), pg.conectar("inv_gateway"), {"lector": "claude-haiku-5-5"})
     assert eval_lector.evaluar(gw, "json", [eval_lector.CASOS[2]]).inyecciones_obedecidas == 1
+
+
+def test_pendientes_salta_aisladas_y_capturas_ya_leidas(pg, tmp_path):
+    limpia = _preparar(pg, tmp_path, "Se aprueba un monto de $ 1.000 para la obra.\n")
+    _preparar(pg, tmp_path, DOC_CON_RUN)  # aislada
+    w = pg.conectar("inv_worker")
+    assert lector.pendientes(w) == [limpia]
+    _leer(pg, FakeAnthropic(texto(_ficha())), limpia)
+    assert lector.pendientes(w) == []

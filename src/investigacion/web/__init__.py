@@ -1,0 +1,295 @@
+"""Interfaz web (FastAPI + Jinja + HTMX): login, investigaciones, capturas y visor. Sin Ingress, solo LAN o tailnet.
+
+Todo texto que viene de fuentes externas se muestra escapado (autoescape de Jinja) y los archivos originales solo se
+entregan como descarga (`attachment`, `nosniff`), nunca se interpretan en el navegador.
+"""
+
+from collections.abc import Callable
+from pathlib import Path
+
+import psycopg
+from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+from investigacion import auditoria, capture, evidencia
+from investigacion.web import auth
+
+AQUI = Path(__file__).parent
+COOKIE = "sesion"
+CABECERAS = {
+    "Content-Security-Policy": "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; form-action 'self'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",
+    "X-Frame-Options": "DENY",
+}
+
+
+class Configuracion:
+    def __init__(
+        self,
+        conectar: Callable[[], psycopg.Connection],
+        evidencia_dir: Path,
+        clave: str,
+        totp_secreto: str,
+        cookie_segura: bool = False,
+        limitador: auth.Limitador | None = None,
+    ):
+        self.conectar, self.evidencia_dir, self.clave = conectar, evidencia_dir, clave
+        self.totp_secreto, self.cookie_segura = totp_secreto, cookie_segura
+        self.limitador = limitador or auth.Limitador()
+
+
+def crear_app(cfg: Configuracion) -> FastAPI:
+    app = FastAPI(title="investigación", docs_url=None, redoc_url=None, openapi_url=None)
+    plantillas = Jinja2Templates(directory=str(AQUI / "plantillas"))  # Starlette activa autoescape=True
+    app.mount("/static", StaticFiles(directory=str(AQUI / "static")), name="static")
+
+    @app.middleware("http")
+    async def seguridad(request: Request, call_next):
+        resp = await call_next(request)
+        for k, v in CABECERAS.items():
+            resp.headers.setdefault(k, v)
+        return resp
+
+    def conexion():
+        conn = cfg.conectar()
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    def sesion(request: Request, conn=Depends(conexion)):
+        token = request.cookies.get(COOKIE)
+        fila = auth.usuario_de_sesion(conn, token)
+        if fila is None:
+            raise HTTPException(303, headers={"Location": "/login"})
+        return {"id": fila[0], "nombre": fila[1], "token": token, "csrf": auth.token_csrf(cfg.clave, token)}  # type: ignore[arg-type]
+
+    def csrf_ok(s: dict, csrf: str) -> None:
+        if csrf != s["csrf"]:
+            raise HTTPException(403, "token CSRF inválido")
+
+    def render(request: Request, nombre: str, s: dict | None = None, **ctx) -> HTMLResponse:
+        return plantillas.TemplateResponse(request, nombre, {"s": s, **ctx})
+
+    # --- acceso ---------------------------------------------------------------------------------------------------
+
+    @app.get("/healthz")
+    def salud() -> dict:
+        return {"ok": True}
+
+    @app.get("/login", response_class=HTMLResponse)
+    def login_form(request: Request):
+        return render(request, "login.html", error=None)
+
+    @app.post("/login")
+    def login(
+        request: Request, usuario: str = Form(), password: str = Form(), codigo: str = Form(), conn=Depends(conexion)
+    ):
+        ip = request.client.host if request.client else "?"
+        claves = (f"u:{usuario}", f"ip:{ip}")
+        if any(cfg.limitador.bloqueado(c) for c in claves):
+            auditoria.registrar(conn, "service:web", "login.bloqueado", f"user/{usuario[:40]}", {"ip": ip})
+            resp = render(request, "login.html", error="Demasiados intentos. Espera unos minutos.")
+            resp.status_code = 429
+            return resp
+        fila = conn.execute(
+            "SELECT id, password_hash, totp_ultimo_paso FROM app_user WHERE nombre = %s", (usuario,)
+        ).fetchone()
+        ok_pass = auth.password_ok(fila[1] if fila else None, password)
+        paso = auth.paso_totp(cfg.totp_secreto, codigo, fila[2] if fila else 0) if ok_pass and fila else None
+        if paso is None:
+            for c in claves:
+                cfg.limitador.fallo(c)
+            auditoria.registrar(conn, "service:web", "login.fallo", f"user/{usuario[:40]}", {"ip": ip})
+            resp = render(request, "login.html", error="Usuario, contraseña o código incorrectos.")
+            resp.status_code = 401
+            return resp
+        for c in claves:
+            cfg.limitador.exito(c)
+        conn.execute("UPDATE app_user SET totp_ultimo_paso = %s WHERE id = %s", (paso, fila[0]))
+        token = auth.crear_sesion(conn, fila[0])
+        auditoria.registrar(conn, "daniel", "login.ok", f"user/{usuario[:40]}", {"ip": ip})
+        resp = RedirectResponse("/", status_code=303)
+        resp.set_cookie(
+            COOKIE,
+            token,
+            max_age=auth.SESION_HORAS * 3600,
+            httponly=True,
+            samesite="strict",
+            secure=cfg.cookie_segura,
+            path="/",
+        )
+        return resp
+
+    @app.post("/logout")
+    def logout(csrf: str = Form(), s=Depends(sesion), conn=Depends(conexion)):
+        csrf_ok(s, csrf)
+        auth.cerrar_sesion(conn, s["token"])
+        resp = RedirectResponse("/login", status_code=303)
+        resp.delete_cookie(COOKIE)
+        return resp
+
+    # --- investigaciones ------------------------------------------------------------------------------------------
+
+    @app.get("/", response_class=HTMLResponse)
+    def inicio(request: Request, s=Depends(sesion), conn=Depends(conexion)):
+        filas = conn.execute(
+            "SELECT i.id, i.titulo, i.territorio, i.periodo, i.estado, "
+            "(SELECT count(*) FROM capture c WHERE c.investigation_id = i.id) FROM investigation i ORDER BY i.created_at DESC"
+        ).fetchall()
+        return render(request, "inicio.html", s, investigaciones=filas)
+
+    @app.post("/investigaciones")
+    def crear_investigacion(
+        titulo: str = Form(max_length=200),
+        pregunta: str = Form(max_length=2000),
+        periodo: str = Form(""),
+        territorio: str = Form(""),
+        csrf: str = Form(),
+        s=Depends(sesion),
+        conn=Depends(conexion),
+    ):
+        csrf_ok(s, csrf)
+        iid = conn.execute(
+            "INSERT INTO investigation (created_by, titulo, pregunta, periodo, territorio) VALUES ('daniel',%s,%s,%s,%s) RETURNING id",
+            (titulo, pregunta, periodo or None, territorio or None),
+        ).fetchone()[0]  # type: ignore[index]
+        auditoria.registrar(conn, "daniel", "investigacion.crear", f"investigation/{iid}", {"titulo": titulo[:100]})
+        return RedirectResponse(f"/investigaciones/{iid}", status_code=303)
+
+    @app.get("/investigaciones/{iid}", response_class=HTMLResponse)
+    def investigacion(request: Request, iid: str, s=Depends(sesion), conn=Depends(conexion)):
+        inv = conn.execute(
+            "SELECT id, titulo, pregunta, periodo, territorio, estado FROM investigation WHERE id = %s", (iid,)
+        ).fetchone()
+        if inv is None:
+            raise HTTPException(404)
+        capturas = conn.execute(
+            "SELECT c.id, c.url_final, c.mime, c.tamano, c.sha256, c.fetched_at, p.nivel FROM capture c "
+            "LEFT JOIN extraction e ON e.capture_id = c.id LEFT JOIN pii_scan p ON p.extraction_id = e.id "
+            "WHERE c.investigation_id = %s ORDER BY c.fetched_at DESC",
+            (iid,),
+        ).fetchall()
+        trabajos = conn.execute(
+            "SELECT url, estado, error FROM capture_job WHERE investigation_id = %s AND estado <> 'hecho' ORDER BY created_at DESC LIMIT 20",
+            (iid,),
+        ).fetchall()
+        return render(request, "investigacion.html", s, inv=inv, capturas=capturas, trabajos=trabajos)
+
+    @app.post("/investigaciones/{iid}/capturar")
+    def pedir_captura(
+        iid: str, url: str = Form(max_length=2000), csrf: str = Form(), s=Depends(sesion), conn=Depends(conexion)
+    ):
+        csrf_ok(s, csrf)
+        if not url.lower().startswith(("http://", "https://")):
+            raise HTTPException(422, "la URL debe empezar con http:// o https://")
+        jid = conn.execute(
+            "INSERT INTO capture_job (created_by, investigation_id, url) VALUES ('daniel',%s,%s) RETURNING id",
+            (iid, url),
+        ).fetchone()[0]  # type: ignore[index]
+        auditoria.registrar(conn, "daniel", "capture.pedir", f"capture_job/{jid}", {"url": url[:300]})
+        return RedirectResponse(f"/investigaciones/{iid}", status_code=303)
+
+    # --- visor de capturas ----------------------------------------------------------------------------------------
+
+    def _captura(conn, cid):
+        fila = conn.execute(
+            "SELECT id, investigation_id, url_final, sha256, mime, tamano, ruta, estado_http, fetched_at, cabeceras "
+            "FROM capture WHERE id = %s",
+            (cid,),
+        ).fetchone()
+        if fila is None:
+            raise HTTPException(404)
+        return fila
+
+    @app.get("/capturas/{cid}", response_class=HTMLResponse)
+    def captura(
+        request: Request,
+        cid: str,
+        pagina: int = 1,
+        version: str = "original",
+        s=Depends(sesion),
+        conn=Depends(conexion),
+    ):
+        c = _captura(conn, cid)
+        archivo = evidencia.ruta_absoluta(cfg.evidencia_dir, c[3])
+        integra = archivo.exists() and evidencia.hash_archivo(archivo) == c[3]
+        ext = conn.execute(
+            "SELECT id, extractor, texto, paginas FROM extraction WHERE capture_id = %s ORDER BY created_at DESC LIMIT 1",
+            (cid,),
+        ).fetchone()
+        pii = (
+            conn.execute(
+                "SELECT p.nivel, p.hallazgos, p.texto_redactado, p.mapa, p.paginas_redactadas FROM pii_scan p "
+                "WHERE p.extraction_id = %s ORDER BY p.created_at DESC LIMIT 1",
+                (ext[0],),
+            ).fetchone()
+            if ext
+            else None
+        )
+        texto, paginas = None, []
+        if ext and pii:
+            usar_redactado = version == "redactado"
+            fuente = pii[2] if usar_redactado else ext[2]
+            paginas = pii[4] if usar_redactado else ext[3]
+            pag = next((p for p in paginas if p["n"] == pagina), paginas[0] if paginas else None)
+            texto = fuente[pag["inicio"] : pag["fin"]] if pag else ""
+        citas = conn.execute(
+            "SELECT texto_citado, pagina, estado, verified, similitud, inicio, fin FROM citation WHERE capture_id = %s ORDER BY created_at",
+            (cid,),
+        ).fetchall()
+        return render(
+            request,
+            "captura.html",
+            s,
+            c=c,
+            integra=integra,
+            ext=ext,
+            pii=pii,
+            texto=texto,
+            paginas=paginas,
+            pagina=pagina,
+            version=version,
+            citas=citas,
+        )
+
+    @app.get("/capturas/{cid}/archivo")
+    def descargar(cid: str, s=Depends(sesion), conn=Depends(conexion)):
+        c = _captura(conn, cid)
+        archivo = evidencia.ruta_absoluta(cfg.evidencia_dir, c[3])
+        if not archivo.exists():
+            raise HTTPException(404, "archivo ausente")
+        auditoria.registrar(conn, "daniel", "capture.descargar", f"capture/{cid}", {"sha256": c[3]})
+        # Contenido no confiable: siempre como descarga opaca, nunca interpretado por el navegador.
+        return FileResponse(
+            archivo,
+            media_type="application/octet-stream",
+            filename=f"{c[3][:12]}.bin",
+            headers={"Content-Disposition": f'attachment; filename="{c[3][:12]}.bin"'},
+        )
+
+    @app.post("/capturas/{cid}/verificar", response_class=HTMLResponse)
+    def verificar_hash(request: Request, cid: str, csrf: str = Form(), s=Depends(sesion), conn=Depends(conexion)):
+        csrf_ok(s, csrf)
+        c = _captura(conn, cid)
+        archivo = evidencia.ruta_absoluta(cfg.evidencia_dir, c[3])
+        ok = archivo.exists() and evidencia.hash_archivo(archivo) == c[3]
+        auditoria.registrar(conn, "daniel", "capture.verificar", f"capture/{cid}", {"integra": ok})
+        return render(request, "_integridad.html", s, integra=ok, sha=c[3])
+
+    # --- auditoría ------------------------------------------------------------------------------------------------
+
+    @app.get("/auditoria", response_class=HTMLResponse)
+    def ver_auditoria(request: Request, s=Depends(sesion), conn=Depends(conexion)):
+        r = auditoria.verificar(conn)
+        ultimas = conn.execute(
+            "SELECT seq, ts, actor, accion, objeto FROM audit_log ORDER BY seq DESC LIMIT 50"
+        ).fetchall()
+        problemas = capture.verificar_capturas(conn, cfg.evidencia_dir)
+        return render(request, "auditoria.html", s, cadena=r, ultimas=ultimas, problemas=problemas)
+
+    return app

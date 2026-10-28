@@ -6,11 +6,16 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
   "anthropic>=1.13.0",
+  "argon2-cffi>=25.1.0",
   "dbos>=3.2",
   "fastapi>=0.143.0",
   "httpx>=0.28.1",
+  "itsdangerous>=2.2.0",
+  "jinja2>=3.1.6",
   "psycopg[binary,pool]>=3.3",
   "pydantic-settings>=2.15",
+  "pyotp>=2.10.0",
+  "python-multipart>=0.0.32",
   "rapidfuzz>=3.14.6",
   "structlog>=26.1",
   "uvicorn>=0.54.0",
@@ -65,8 +70,13 @@ target-version = "py314"
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "ASYNC", "S", "RUF"]
 ignore = ["S101"] # assert en tests
 
+[tool.ruff.lint.flake8-bugbear]
+# Idioma de FastAPI: Depends() y Form() en los argumentos por defecto.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Form"]
+
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S", "E501", "RUF001"]
+"src/investigacion/web/__init__.py" = ["E501"] # consultas SQL de una línea
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

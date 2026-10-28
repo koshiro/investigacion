@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block contenido %}
+<h1>Investigaciones</h1>
+{% if investigaciones %}
+<table>
+  <thead><tr><th>Título</th><th>Territorio</th><th>Periodo</th><th>Estado</th><th>Capturas</th></tr></thead>
+  <tbody>
+  {% for i in investigaciones %}
+    <tr><td><a href="/investigaciones/{{ i[0] }}">{{ i[1] }}</a></td><td>{{ i[2] or "" }}</td><td>{{ i[3] or "" }}</td><td>{{ i[4] }}</td><td>{{ i[5] }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p>Aún no hay investigaciones.</p>{% endif %}
+<h2>Nueva investigación</h2>
+<form method="post" action="/investigaciones" class="columna">
+  <input type="hidden" name="csrf" value="{{ s.csrf }}">
+  <label>Título <input name="titulo" maxlength="200" required></label>
+  <label>Pregunta <textarea name="pregunta" maxlength="2000" required></textarea></label>
+  <label>Periodo <input name="periodo" placeholder="2019-2026"></label>
+  <label>Territorio <input name="territorio" placeholder="Villarrica"></label>
+  <button type="submit">Crear</button>
+</form>
+{% endblock %}
