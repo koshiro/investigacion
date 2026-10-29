@@ -27,7 +27,9 @@ SISTEMA = (
     "montos, fechas, organismos, plazos, decisiones y sus responsables. Cada hecho lleva una cita LITERAL, copiada "
     "palabra por palabra del documento (sin resumir ni corregir), y la página donde está (las páginas se marcan "
     "como [página N]). Los marcadores como [PERSONA_1] o [RUN_2] son parte del texto: déjalos tal cual. "
-    "No inventes, no completes ni calcules cifras que el documento no diga. Si no hay hechos, devuelve la lista vacía."
+    "No inventes, no completes ni calcules cifras que el documento no diga. Si no hay hechos, devuelve la lista vacía. "
+    "Sé breve: como máximo 60 hechos (los más relevantes), cada enunciado de hasta 200 caracteres y cada cita de hasta "
+    "400 caracteres: copia el fragmento mínimo que respalda el hecho."
 )
 
 
@@ -37,6 +39,17 @@ class CapturaAislada(Exception):
 
 class LectorError(Exception):
     pass
+
+
+MAX_TOKENS_FICHA = 8000  # una ficha con decenas de hechos y citas literales no cabe en los 4096 por defecto
+
+
+def esquema_api() -> dict:
+    """Esquema de la ficha para `output_config.format`. La API no admite maxItems/maxLength/minLength…: el SDK los
+    quita (los pasa a la descripción) con `transform_schema`; Pydantic sigue validando los límites al recibir."""
+    import anthropic
+
+    return anthropic.transform_schema(Ficha)
 
 
 class Cita(BaseModel):
@@ -125,7 +138,8 @@ def leer(
             sistema=SISTEMA,
             documentos=[Documento(capture_id=capture_id, texto=texto_con_paginas(texto, paginas))],
             instruccion="Devuelve la ficha JSON con los hechos del documento.",
-            esquema=Ficha.model_json_schema(),
+            esquema=esquema_api(),
+            max_tokens=MAX_TOKENS_FICHA,
         )
         ficha, resp = None, None
         for intento in range(2):
