@@ -113,14 +113,15 @@ def leer(
     estrategia: Literal["json", "citas"] = "json",
 ) -> dict:
     fila = worker.execute(
-        "SELECT p.id, p.nivel, p.texto_redactado, p.paginas_redactadas FROM pii_scan p "
+        "SELECT p.id, p.nivel, p.texto_redactado, p.paginas_redactadas, "
+        "EXISTS (SELECT 1 FROM capture_release r WHERE r.pii_scan_id = p.id) FROM pii_scan p "
         "JOIN extraction e ON e.id = p.extraction_id WHERE e.capture_id = %s ORDER BY p.created_at DESC LIMIT 1",
         (capture_id,),
     ).fetchone()
     if fila is None:
         raise LectorError("la captura aún no tiene extracción")
-    pii_id, nivel, texto, pags = fila
-    if nivel == "alto":
+    pii_id, nivel, texto, pags, liberada = fila
+    if nivel == "alto" and not liberada:
         auditoria.registrar(worker, ACTOR, "lector.rechazada", f"capture/{capture_id}", {"motivo": "nivel alto"})
         raise CapturaAislada("captura aislada por datos personales de nivel alto: requiere aprobación")
     paginas = [verificador.Pagina(p["n"], p["inicio"], p["fin"]) for p in pags]
@@ -206,15 +207,29 @@ def leer(
     return {"card_id": str(card_id), **resumen, "advertencias": ficha.advertencias}
 
 
-def pendientes(conn: psycopg.Connection, limite: int = 20) -> list[str]:
-    """Capturas sin ficha cuyo ESCANEO MÁS RECIENTE no es de nivel alto (alto espera la aprobación de Daniel)."""
+def pendientes(conn: psycopg.Connection, limite: int = 20, investigation_id: str | None = None) -> list[str]:
+    """Capturas sin ficha cuyo ESCANEO MÁS RECIENTE no es de nivel alto, salvo que Daniel lo haya liberado.
+
+    Una captura con el mismo SHA-256 que otra que ya tiene ficha no se vuelve a leer (evita fichas repetidas)."""
     filas = conn.execute(
-        "SELECT c.id FROM capture c JOIN LATERAL (SELECT p.nivel, e.extractor, length(p.texto_redactado) AS largo "
+        "SELECT c.id FROM capture c JOIN LATERAL "
+        "(SELECT p.id, p.nivel, e.extractor, length(p.texto_redactado) AS largo "
         "FROM pii_scan p "
         "JOIN extraction e ON e.id = p.extraction_id WHERE e.capture_id = c.id "
         "ORDER BY p.created_at DESC LIMIT 1) u ON true "
-        "WHERE u.nivel <> 'alto' AND u.extractor <> 'no-soportado' AND u.largo <= %s "
-        "AND NOT EXISTS (SELECT 1 FROM card k WHERE k.capture_id = c.id) ORDER BY c.created_at LIMIT %s",
-        (MAX_CARACTERES_DOCUMENTO, limite),
+        "WHERE (u.nivel <> 'alto' OR EXISTS (SELECT 1 FROM capture_release r WHERE r.pii_scan_id = u.id)) "
+        "AND u.extractor <> 'no-soportado' AND u.largo <= %(max)s "
+        "AND (%(inv)s::uuid IS NULL OR c.investigation_id = %(inv)s::uuid) "
+        "AND NOT EXISTS (SELECT 1 FROM card k JOIN capture o ON o.id = k.capture_id WHERE o.sha256 = c.sha256) "
+        "ORDER BY c.created_at LIMIT %(limite)s",
+        {"max": MAX_CARACTERES_DOCUMENTO, "limite": limite, "inv": investigation_id},
     ).fetchall()
+    vistos: set[str] = set()
+    salida = []
+    for (cid,) in filas:
+        sha = conn.execute("SELECT sha256 FROM capture WHERE id = %s", (cid,)).fetchone()[0]  # type: ignore[index]
+        if sha not in vistos:  # dos capturas nuevas del mismo archivo: se lee una
+            vistos.add(sha)
+            salida.append(cid)
+    filas = [(c,) for c in salida]
     return [str(f[0]) for f in filas]

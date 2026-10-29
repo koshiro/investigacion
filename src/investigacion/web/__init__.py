@@ -180,7 +180,54 @@ def crear_app(cfg: Configuracion) -> FastAPI:
             "SELECT url, estado, error FROM capture_job WHERE investigation_id = %s AND estado <> 'hecho' ORDER BY created_at DESC LIMIT 20",
             (iid,),
         ).fetchall()
-        return render(request, "investigacion.html", s, inv=inv, capturas=capturas, trabajos=trabajos)
+        pedidos = conn.execute(
+            "SELECT created_at, workflow_id, iniciado_at FROM plan_request WHERE investigation_id = %s "
+            "ORDER BY created_at DESC LIMIT 5",
+            (iid,),
+        ).fetchall()
+        tareas = conn.execute(
+            "SELECT t.orden, t.rol, t.entradas->>'herramienta', t.objetivo, t.estado, t.error, t.costo_usd FROM task t "
+            "WHERE t.plan_id = (SELECT id FROM plan WHERE investigation_id = %s ORDER BY created_at DESC LIMIT 1) "
+            "ORDER BY t.orden",
+            (iid,),
+        ).fetchall()
+        canales = conn.execute(
+            "SELECT o.nombre, k.canal, coalesce(k.correo, k.url_portal), k.tipo, k.estado FROM organization_contact k "
+            "JOIN organization o ON o.id = k.organization_id WHERE k.estado <> 'descartado' ORDER BY o.nombre, k.estado",
+        ).fetchall()
+        borradores = conn.execute(
+            "SELECT r.id, o.nombre, r.asunto, r.estado FROM request r JOIN organization o ON o.id = r.organization_id "
+            "WHERE r.investigation_id = %s AND NOT EXISTS (SELECT 1 FROM request n WHERE n.anterior_id = r.id) "
+            "ORDER BY o.nombre",
+            (iid,),
+        ).fetchall()
+        hallazgos = conn.execute(
+            "SELECT coalesce(h.codigo, '—'), f.estado, count(*) FROM finding f LEFT JOIN hypothesis h ON h.id = f.hypothesis_id "
+            "WHERE f.investigation_id = %s GROUP BY 1, 2 ORDER BY 1, 2",
+            (iid,),
+        ).fetchall()
+        return render(
+            request,
+            "investigacion.html",
+            s,
+            inv=inv,
+            capturas=capturas,
+            trabajos=trabajos,
+            pedidos=pedidos,
+            tareas=tareas,
+            canales=canales,
+            borradores=borradores,
+            hallazgos=hallazgos,
+        )
+
+    @app.post("/investigaciones/{iid}/plan")
+    def pedir_plan(iid: uuid.UUID, csrf: str = Form(), s=Depends(sesion), conn=Depends(conexion)):
+        csrf_ok(s, csrf)
+        pid = conn.execute(
+            "INSERT INTO plan_request (created_by, investigation_id) VALUES ('daniel', %s) RETURNING id", (str(iid),)
+        ).fetchone()[0]  # type: ignore[index]
+        auditoria.registrar(conn, "daniel", "plan.pedir", f"plan_request/{pid}", {"investigation": str(iid)})
+        return RedirectResponse(f"/investigaciones/{iid}", status_code=303)
 
     @app.post("/investigaciones/{iid}/capturar")
     def pedir_captura(
@@ -291,9 +338,13 @@ def crear_app(cfg: Configuracion) -> FastAPI:
             "SELECT decided_at, objeto_tipo, objeto_id, decision, used_at FROM approval ORDER BY decided_at DESC LIMIT 20"
         ).fetchall()
         return render(
-            request, "aprobaciones.html", s, pendientes=aprobaciones.pendientes(conn), decididas=decididas,
+            request,
+            "aprobaciones.html",
+            s,
+            pendientes=aprobaciones.pendientes(conn),
+            decididas=decididas,
             tipos=aprobaciones.TIPOS,
-        )  # fmt: skip
+        )
 
     def _objeto(conn, tipo: str, oid: uuid.UUID) -> aprobaciones.Objeto:
         if tipo not in aprobaciones.TIPOS:

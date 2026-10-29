@@ -90,8 +90,8 @@ def test_el_contrato_no_admite_tools_ni_modelo_elegido_por_el_llamador():
         Solicitud(rol="lector", sistema="s", documentos=[], instruccion="i", tools=[{"name": "enviar_correo"}])
     with pytest.raises(ValidationError):
         Solicitud(rol="lector", sistema="s", documentos=[], instruccion="i", modelo="claude-opus-5-5")
-    with pytest.raises(ValidationError):
-        Solicitud(rol="redactor", sistema="s", documentos=[], instruccion="i")
+    with pytest.raises(ValidationError):  # solo los cuatro roles de agente; ningún servicio con credenciales de envío
+        Solicitud(rol="dispatcher", sistema="s", documentos=[], instruccion="i")
 
 
 def test_registra_tokens_costo_y_hash_y_audita(pg):
