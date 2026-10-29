@@ -4,6 +4,7 @@ Todo texto que viene de fuentes externas se muestra escapado (autoescape de Jinj
 entregan como descarga (`attachment`, `nosniff`), nunca se interpretan en el navegador.
 """
 
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from investigacion import auditoria, capture, evidencia
+from investigacion import aprobaciones, auditoria, capture, evidencia
 from investigacion.web import auth
 
 AQUI = Path(__file__).parent
@@ -281,6 +282,83 @@ def crear_app(cfg: Configuracion) -> FastAPI:
         ok = archivo.exists() and evidencia.hash_archivo(archivo) == c[3]
         auditoria.registrar(conn, "daniel", "capture.verificar", f"capture/{cid}", {"integra": ok})
         return render(request, "_integridad.html", s, integra=ok, sha=c[3])
+
+    # --- bandeja de aprobaciones -----------------------------------------------------------------------------------
+
+    @app.get("/aprobaciones", response_class=HTMLResponse)
+    def bandeja(request: Request, s=Depends(sesion), conn=Depends(conexion)):
+        decididas = conn.execute(
+            "SELECT decided_at, objeto_tipo, objeto_id, decision, used_at FROM approval ORDER BY decided_at DESC LIMIT 20"
+        ).fetchall()
+        return render(
+            request, "aprobaciones.html", s, pendientes=aprobaciones.pendientes(conn), decididas=decididas,
+            tipos=aprobaciones.TIPOS,
+        )  # fmt: skip
+
+    def _objeto(conn, tipo: str, oid: uuid.UUID) -> aprobaciones.Objeto:
+        if tipo not in aprobaciones.TIPOS:
+            raise HTTPException(404)
+        obj = aprobaciones.cargar(conn, tipo, str(oid))
+        if obj is None:
+            raise HTTPException(404)
+        return obj
+
+    @app.get("/aprobaciones/{tipo}/{oid}", response_class=HTMLResponse)
+    def ver_aprobacion(request: Request, tipo: str, oid: uuid.UUID, s=Depends(sesion), conn=Depends(conexion)):
+        obj = _objeto(conn, tipo, oid)
+        previas = conn.execute(
+            "SELECT decided_at, decision, used_at, comentario FROM approval WHERE objeto_tipo = %s AND objeto_id = %s "
+            "ORDER BY decided_at",
+            (tipo, str(oid)),
+        ).fetchall()
+        return render(request, "aprobacion.html", s, obj=obj, tipos=aprobaciones.TIPOS, previas=previas, error=None)
+
+    @app.post("/aprobaciones/{tipo}/{oid}", response_class=HTMLResponse)
+    def decidir(
+        request: Request,
+        tipo: str,
+        oid: uuid.UUID,
+        content_hash: str = Form(min_length=64, max_length=64),
+        decision: str = Form(pattern="^(aprobada|rechazada)$"),
+        codigo: str = Form(max_length=10),
+        comentario: str = Form("", max_length=2000),
+        csrf: str = Form(),
+        s=Depends(sesion),
+        conn=Depends(conexion),
+    ):
+        csrf_ok(s, csrf)
+        obj = _objeto(conn, tipo, oid)
+
+        def error(msg: str, estado: int) -> HTMLResponse:
+            resp = render(request, "aprobacion.html", s, obj=obj, tipos=aprobaciones.TIPOS, previas=[], error=msg)
+            resp.status_code = estado
+            return resp
+
+        clave = f"aprobar:{s['id']}"
+        if cfg.limitador.bloqueado(clave):
+            return error("Demasiados códigos incorrectos. Espera unos minutos.", 429)
+        # TOTP en CADA aprobación: un código nuevo (paso posterior al último usado, también al del login).
+        ultimo = conn.execute("SELECT totp_ultimo_paso FROM app_user WHERE id = %s", (s["id"],)).fetchone()[0]  # type: ignore[index]
+        paso = auth.paso_totp(cfg.totp_secreto, codigo, ultimo)
+        if (
+            paso is None
+            or conn.execute(
+                "UPDATE app_user SET totp_ultimo_paso = %s WHERE id = %s AND totp_ultimo_paso < %s",
+                (paso, s["id"], paso),
+            ).rowcount
+            != 1
+        ):
+            cfg.limitador.fallo(clave)
+            auditoria.registrar(conn, "daniel", "approval.totp_fallo", f"{tipo}/{oid}", {})
+            return error(
+                "Código incorrecto o ya usado. Cada aprobación pide un código nuevo (espera al siguiente).", 401
+            )
+        cfg.limitador.exito(clave)
+        try:
+            aprobaciones.decidir(conn, obj, content_hash, decision, paso, comentario)
+        except aprobaciones.ContenidoCambiado as e:
+            return error(str(e), 409)
+        return RedirectResponse("/aprobaciones", status_code=303)
 
     # --- auditoría ------------------------------------------------------------------------------------------------
 

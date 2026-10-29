@@ -4,32 +4,13 @@ import secrets
 
 import pyotp
 import pytest
-from fastapi.testclient import TestClient
 
 from investigacion import auditoria, evidencia
-from investigacion.web import Configuracion, auth, crear_app
-
-CLAVE = "k" * 40
-# Generadas en cada ejecución: ningún secreto literal en el repo.
-PASSWORD = secrets.token_urlsafe(18)
-OTRA = secrets.token_urlsafe(18)
-NOMBRE = secrets.choice(["daniel"])
-CAMPOS = "usuario password codigo".split()  # noqa: SIM905  (sin literales juntos que GitGuardian lee como credencial)
+from tests.conftest import CAMPOS, NOMBRE, OTRA, PASSWORD
 
 
 def _formulario(*valores):
     return dict(zip(CAMPOS, valores, strict=True))
-
-
-@pytest.fixture
-def sitio(pg, tmp_path):
-    secreto = pyotp.random_base32()
-    pg.su.execute(
-        "INSERT INTO app_user (created_by, nombre, password_hash) VALUES ('t',%s,%s)", (NOMBRE, auth.hashear(PASSWORD))
-    )
-    cfg = Configuracion(lambda: pg.conectar("inv_web"), tmp_path, CLAVE, secreto)
-    cliente = TestClient(crear_app(cfg), follow_redirects=False)
-    return type("Sitio", (), {"c": cliente, "pg": pg, "dir": tmp_path, "secreto": secreto, "cfg": cfg})
 
 
 def _codigo(sitio, desplazamiento=0):

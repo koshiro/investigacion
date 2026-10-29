@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block titulo %}Aprobaciones{% endblock %}
+{% block contenido %}
+<h1>Aprobaciones</h1>
+<p class="tenue">Cada decisión pide un código TOTP nuevo y queda ligada al hash del contenido exacto que ves.</p>
+{% if pendientes %}
+<table>
+  <thead><tr><th>Qué</th><th>Resumen</th></tr></thead>
+  <tbody>
+  {% for tipo, oid, resumen in pendientes %}
+    <tr><td>{{ tipos[tipo] }}</td><td><a href="/aprobaciones/{{ tipo }}/{{ oid }}">{{ resumen }}</a></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p>Nada pendiente.</p>{% endif %}
+
+<h2>Últimas decisiones</h2>
+{% if decididas %}
+<table>
+  <thead><tr><th>Fecha</th><th>Qué</th><th>Decisión</th><th>Usada</th></tr></thead>
+  <tbody>
+  {% for d in decididas %}
+    <tr><td>{{ d[0].strftime("%Y-%m-%d %H:%M") }}</td>
+      <td><a href="/aprobaciones/{{ d[1] }}/{{ d[2] }}">{{ tipos.get(d[1], d[1]) }}</a></td>
+      <td>{% if d[3] == "aprobada" %}<span class="ok">aprobada</span>{% else %}<span class="alerta">rechazada</span>{% endif %}</td>
+      <td>{{ d[4].strftime("%Y-%m-%d %H:%M") if d[4] else "—" }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p>Ninguna todavía.</p>{% endif %}
+{% endblock %}

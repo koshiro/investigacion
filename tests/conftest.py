@@ -1,11 +1,15 @@
 import os
+import secrets
 import uuid
 
 import psycopg
 import psycopg.conninfo
+import pyotp
 import pytest
+from fastapi.testclient import TestClient
 
 from investigacion import db
+from investigacion.web import Configuracion, auth, crear_app
 
 URL_ADMIN = os.environ.get("INVESTIGACION_TEST_DATABASE_URL")
 DUENO = "inv_dueno_pruebas"
@@ -55,3 +59,24 @@ def pg():
         c.close()
     with psycopg.connect(URL_ADMIN, autocommit=True) as admin:
         admin.execute(f'DROP DATABASE IF EXISTS "{nombre}" WITH (FORCE)')  # type: ignore[arg-type]
+
+
+# --- web (compartido por test_web y test_bandeja) ---
+
+CLAVE = "k" * 40
+# Generadas en cada ejecución: ningún secreto literal en el repo.
+PASSWORD = secrets.token_urlsafe(18)
+OTRA = secrets.token_urlsafe(18)
+NOMBRE = secrets.choice(["daniel"])
+CAMPOS = "usuario password codigo".split()  # noqa: SIM905  (sin literales juntos que GitGuardian lee como credencial)
+
+
+@pytest.fixture
+def sitio(pg, tmp_path):
+    secreto = pyotp.random_base32()
+    pg.su.execute(
+        "INSERT INTO app_user (created_by, nombre, password_hash) VALUES ('t',%s,%s)", (NOMBRE, auth.hashear(PASSWORD))
+    )
+    cfg = Configuracion(lambda: pg.conectar("inv_web"), tmp_path, CLAVE, secreto)
+    cliente = TestClient(crear_app(cfg), follow_redirects=False)
+    return type("Sitio", (), {"c": cliente, "pg": pg, "dir": tmp_path, "secreto": secreto, "cfg": cfg})
