@@ -253,3 +253,16 @@ def test_la_solicitud_del_lector_pide_el_esquema_de_la_api_y_mas_tokens(pg, tmp_
     p = fake.messages.recibido[0]
     assert p["max_tokens"] == lector.MAX_TOKENS_FICHA
     assert p["output_config"]["format"]["schema"] == lector.esquema_api()
+
+
+def test_documento_demasiado_grande_no_se_envia_ni_se_lista_como_pendiente(pg, tmp_path, monkeypatch):
+    monkeypatch.setattr(lector, "MAX_CARACTERES_DOCUMENTO", 200)
+    chico = _preparar(pg, tmp_path, "Se aprueba un monto de $ 1.000 para la obra.\n")
+    grande = _preparar(pg, tmp_path, "Texto de relleno sin datos personales. " * 40)
+    w = pg.conectar("inv_worker")
+    assert lector.pendientes(w) == [chico]
+    fake = FakeAnthropic(texto(_ficha()))
+    with pytest.raises(lector.LectorError, match="supera el tope"):
+        _leer(pg, fake, grande)
+    assert fake.messages.recibido == []  # fallar cerrado: nada sale hacia la API
+    assert pg.su.execute("SELECT count(*) FROM audit_log WHERE accion = 'lector.omitida'").fetchone()[0] == 1

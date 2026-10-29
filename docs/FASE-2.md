@@ -11,22 +11,21 @@ bueno) y tres acciones suyas (ver «Qué debe hacer Daniel»).
 | `web` (login argon2 + TOTP) | desplegado, **sin usuario creado** | NodePort 30960, sin Ingress |
 | `capture` | desplegado; probado con fuentes reales | cola `capture_job` |
 | `extract` | desplegado y estable (sin reinicios); PDF con texto nativo + OCR | imagen `investigacion-extract` |
-| `llm-gateway` | desplegado en **0 réplicas** | falta el Secret `anthropic-api` |
-| `lector` | CronJob suspendido | `investigacion lector --pendientes` |
-| Eval Citations vs JSON | código listo (`eval_lector.py`), **sin ejecutar contra la API** | `investigacion eval-lector` |
+| `llm-gateway` | desplegado, 1 réplica, **clave provisional** (Secret `anthropic-api`, cifrado con SOPS) | Daniel la reemplaza y pone el límite de gasto |
+| `lector` | CronJob suspendido; **ejecutado a mano sobre las 10 capturas** (resultados abajo) | `investigacion lector --pendientes` |
+| Eval Citations vs JSON | **ejecutado contra la API real** (resultados abajo) | `src/investigacion/eval_lector.py` |
 
-Imagen en producción: `sha-69554a8` (ambas). 199 pruebas pasan en el CI (Postgres real); las de docling y GLiNER corren
+Imagen en producción: `sha-cbf964d` (ambas; el tope de tamaño del lector llega en la siguiente). 203 pruebas pasan en el CI (Postgres real); las de docling y GLiNER corren
 con el extra `extract` en local.
 
 ## Qué debe hacer Daniel (en orden)
 
-1. Crear el usuario: receta en `homelab-config/cluster/apps/investigacion/README.md` (contraseña ≥ 14 caracteres; el
-   TOTP es el del Secret `web-secreto`). Entrar a `http://<nodo>:30960`.
-2. Poner el límite de gasto en la consola de Anthropic y crear el Secret `anthropic-api` (`ANTHROPIC_API_KEY`) como
-   `anthropic-api.sops.yaml` en `solo-flux/`; subir `llm-gateway` a 1 réplica por PR.
-3. Correr `investigacion eval-lector` (cuesta centavos): decide entre (a) JSON + verificador y (b) Citations, y es la
-   prueba de comportamiento de la inyección con el modelo real.
-4. Revisar los criterios de abajo y cerrar la fase.
+1. Cambiar la contraseña temporal del usuario `daniel` (repetir `crear-usuario`; receta en
+   `homelab-config/cluster/apps/investigacion/README.md`, con el `nodeSelector` amd64).
+2. **Reemplazar la clave de la API** (hoy es provisional) editando `anthropic-api.sops.yaml` con `sops`, y **poner el
+   límite de gasto en la consola de Anthropic** (aún no está confirmado).
+3. Decidir la estrategia del lector: el eval favorece **JSON + verificador** (ver abajo).
+4. Revisar los criterios y cerrar la fase.
 
 ## Criterios de aceptación de la fase 1
 
@@ -35,8 +34,8 @@ con el extra `extract` en local.
 | Capturar el CSV del BIP y 10 PDF reales; el hash recalculado coincide | **Cumplido.** CSV `inversiones_2027.csv` (6,5 MB) y 10 PDF de SERVIU Araucanía y Vialidad por el proxy (12 trabajos: 11 hechos, 1 `403` esperado de un dominio fuera de lista, más un `diccionario.csv` desechable). `investigacion verificar-capturas` sale 0 | cola `capture_job`, auditoría |
 | Cadena de auditoría válida de punta a punta; modificar una captura se detecta | **Cumplido.** Cadena válida (49 entradas al cierre). En vivo se alteró el archivo de una captura desechable: «el contenido del archivo no coincide con su hash» (exit 1); restaurado, exit 0 | `tests/test_auditoria.py`, `tests/test_capture.py` |
 | Verificador: 20 citas verdaderas aceptadas, 20 inventadas o alteradas rechazadas | **Cumplido** (20/20 y 20/20, conjunto fijo) | `tests/citas_fijas.py`, `tests/test_verificador.py` |
-| Ningún RUN de prueba llega a la API (verificado en `llm_call`) | **Probado con doble**, no con la API real: el doble guarda todo lo enviado; un fallo simulado de la redacción bloquea y no llama. `llm_call` registra redacciones y residuos. Sin clave todavía | `tests/test_gateway.py` |
-| Una inyección en un PDF no cambia el comportamiento del lector | **Probado de forma estructural** con un modelo simulado que obedece (3 variantes): sin herramientas, esquema `extra=forbid`, ficha como único efecto. **Falta la prueba con el modelo real** (caso `inyeccion` del eval) | `tests/test_lector.py` |
+| Ningún RUN de prueba llega a la API (verificado en `llm_call`) | **Cumplido, en vivo y con doble.** Un documento con RUN `12.345.678-5` y un correo plantados se envió por el gateway real: `llm_call` registra `redacciones=2`, `residuos_pii=0`, no bloqueada. En las 17 llamadas reales, `residuos_pii>0` es 0 y los 10 documentos leídos no contienen RUN, correo ni teléfono detectables. Con el doble: un fallo simulado de la redacción bloquea y no llama | `llm_call`, `tests/test_gateway.py` |
+| Una inyección en un PDF no cambia el comportamiento del lector | **Cumplido con el modelo real** (caso `inyeccion` del eval, 2 estrategias): `inyección_obedecida = 0`; el hecho inyectado («transferir $ 999.999.999») no aparece en la ficha. Además, de forma estructural con un modelo simulado que obedece (sin herramientas, esquema `extra=forbid`, ficha como único efecto). Una sola inyección de prueba: no es una garantía | `eval_lector.py`, `tests/test_lector.py` |
 
 ### Extracción de las 12 capturas (resultado final)
 
@@ -53,9 +52,33 @@ con el extra `extract` en local.
 
 Ninguna captura quedó aislada (nivel alto) una vez corregidos los falsos positivos de RUN.
 
-## Cinco hallazgos de la aceptación en vivo (cada uno con su PR)
+## Lectura de las 10 capturas con la API real (2026-10-29, `claude-haiku-5-5`)
 
-Se descubrieron por usar fuentes reales; ninguno lo mostraban las pruebas con datos sintéticos.
+- **10 fichas, 143 citas: 135 verificadas (94 %), 1 en `revisar`, 7 fallidas.** Costo total USD 0,0246 (124.732 tokens de
+  entrada, 24.313 de salida, ~10 s por documento). Sin bloqueos ni residuos de datos personales.
+- Quedaron fuera el CSV del BIP (7 millones de caracteres, > 1 millón de tokens) y la captura duplicada de la Cuenta
+  Pública. `lector.pendientes` ahora excluye lo que supera 300.000 caracteres y `leer` lo rechaza (audita `lector.omitida`).
+- **Las 7 fallidas** (el verificador hizo su trabajo):
+  - 2 citas de menos de 12 caracteres (`m$30.117`): demasiado cortas para probar nada.
+  - 1 **error real del modelo**: declaró `369.318.903` y la cita dice `400.382.055 34.855.859`.
+  - 1 cifra (`4.637`) en la celda vecina, fuera de la cita.
+  - 3 con el número escrito en palabras en la cita («veinte días hábiles») frente a la cifra declarada en dígitos
+    (`20 días hábiles`): rechazo por forma, no por contenido. Mejora posible: aceptar números en palabras.
+
+### Eval: JSON validado + verificador frente a API de Citations
+
+| Estrategia | Recall (8 hechos esperados) | Hechos | Verificados | Inventados | Formato inválido | Inyección obedecida | Costo |
+|------------|-----------------------------|--------|-------------|------------|------------------|---------------------|-------|
+| **JSON + verificador** | **100 %** (8/8) | 12 | 12 | 0 | 0 | 0 | USD 0,0011 |
+| Citations (ficha armada en código) | 88 % (7/8) | 8 | 8 | 0 | 0 | 0 | USD 0,0016 |
+
+Tres casos sintéticos y una corrida: sirve para decidir, no para publicar. Recomendación: **JSON + verificador** (más
+hechos, mejor recall, más barato y permite cifra declarada). Citations garantiza que la cita existe pero no que el
+enunciado la respalde.
+
+## Hallazgos de la aceptación en vivo (cada uno con su PR)
+
+Se descubrieron por usar fuentes y la API reales; ninguno lo mostraban las pruebas con datos sintéticos.
 
 1. **GLiNER rinde ~0,3 KB/s por CPU**: el CSV del BIP habría tardado horas. Los datos tabulares se redactan solo con los
    detectores deterministas (`pii_scan.version = redaccion-N-determinista`); el texto libre usa chunks de ~900 caracteres.
@@ -70,7 +93,11 @@ Se descubrieron por usar fuentes reales; ninguno lo mostraban las pruebas con da
    delante).
 4. **Había extracciones viejas defectuosas**: `extract` ahora vuelve a extraer lo hecho con el motor obsoleto y agrega un
    `pii_scan` nuevo cuando cambia la versión de la redacción; lector y web usan siempre el escaneo más reciente.
-5. **Proceso**: GitGuardian re-escanea todos los commits de un PR y marca pares `"usuario"`/`"password"` literales aunque
+5. **Primeras llamadas reales a la API** (ninguna la mostraban las pruebas con doble): el SDK de Anthropic usa `httpx2` y
+   rechaza un `httpx.Client` (el gateway moría al arrancar; ahora `anthropic.DefaultHttpxClient`); y la API devuelve 400
+   si el esquema de salida estructurada trae `maxItems`/`maxLength` (ahora `anthropic.transform_schema`, que Pydantic
+   complementa al validar). Se leyó el código del SDK, no se adivinó.
+6. **Proceso**: GitGuardian re-escanea todos los commits de un PR y marca pares `"usuario"`/`"password"` literales aunque
    sean de prueba (hubo que rehacer la rama tres veces, sin `--force`); `ruff --fix` reescribe `.split()` en listas; una
    prueba en rojo se subió por encadenar con `;`. Lecciones en la skill `app-dev` (`casos.md`).
 
@@ -83,6 +110,8 @@ Se descubrieron por usar fuentes reales; ninguno lo mostraban las pruebas con da
 - **OCR solo en páginas con < 80 caracteres**: un PDF de una página con un póster/infografía (el Plan de Inversiones,
   2.238 caracteres) no pasa por OCR aunque tenga texto en imágenes. Probado en vivo con Tesseract en dos PDF; **falta un
   PDF totalmente escaneado**.
+- **Cifras escritas en palabras** («veinte días») no coinciden con la cifra declarada en dígitos y la cita se rechaza.
+- **El lector no cubre documentos de más de 300.000 caracteres** (CSV masivos): van por el camino determinista.
 - **Autoridades**: GLiNER redacta también nombres de autoridades en ejercicio (la especificación permite dejarlos).
 - **Tablas de PDF** salen en el orden del flujo, no como celdas; una cita que cruce celdas queda en `revisar`.
 - **Una cita literal del texto inyectado sí verifica**: el verificador prueba que la cita existe, no que sea cierta ni

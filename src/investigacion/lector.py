@@ -41,6 +41,9 @@ class LectorError(Exception):
     pass
 
 
+# Un documento más largo no se lee entero (≈ 85 000 tokens, bajo el umbral de precio de 100 000 de Haiku 5.5): el
+# CSV del BIP tiene 7 millones de caracteres. Datos tabulares masivos van por el camino determinista, no por el lector.
+MAX_CARACTERES_DOCUMENTO = 300_000
 MAX_TOKENS_FICHA = 8000  # una ficha con decenas de hechos y citas literales no cabe en los 4096 por defecto
 
 
@@ -121,6 +124,9 @@ def leer(
         auditoria.registrar(worker, ACTOR, "lector.rechazada", f"capture/{capture_id}", {"motivo": "nivel alto"})
         raise CapturaAislada("captura aislada por datos personales de nivel alto: requiere aprobación")
     paginas = [verificador.Pagina(p["n"], p["inicio"], p["fin"]) for p in pags]
+    if len(texto) > MAX_CARACTERES_DOCUMENTO:
+        auditoria.registrar(worker, ACTOR, "lector.omitida", f"capture/{capture_id}", {"caracteres": len(texto)})
+        raise LectorError(f"documento de {len(texto)} caracteres: supera el tope de {MAX_CARACTERES_DOCUMENTO}")
 
     if estrategia == "citas":
         sol = Solicitud(
@@ -203,11 +209,12 @@ def leer(
 def pendientes(conn: psycopg.Connection, limite: int = 20) -> list[str]:
     """Capturas sin ficha cuyo ESCANEO MÁS RECIENTE no es de nivel alto (alto espera la aprobación de Daniel)."""
     filas = conn.execute(
-        "SELECT c.id FROM capture c JOIN LATERAL (SELECT p.nivel, e.extractor FROM pii_scan p "
+        "SELECT c.id FROM capture c JOIN LATERAL (SELECT p.nivel, e.extractor, length(p.texto_redactado) AS largo "
+        "FROM pii_scan p "
         "JOIN extraction e ON e.id = p.extraction_id WHERE e.capture_id = c.id "
         "ORDER BY p.created_at DESC LIMIT 1) u ON true "
-        "WHERE u.nivel <> 'alto' AND u.extractor <> 'no-soportado' "
+        "WHERE u.nivel <> 'alto' AND u.extractor <> 'no-soportado' AND u.largo <= %s "
         "AND NOT EXISTS (SELECT 1 FROM card k WHERE k.capture_id = c.id) ORDER BY c.created_at LIMIT %s",
-        (limite,),
+        (MAX_CARACTERES_DOCUMENTO, limite),
     ).fetchall()
     return [str(f[0]) for f in filas]
