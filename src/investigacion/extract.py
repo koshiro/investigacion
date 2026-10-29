@@ -16,6 +16,9 @@ from investigacion import auditoria, evidencia, extraer, redaccion
 
 log = structlog.get_logger()
 ACTOR = "service:extract"
+# Salidas del motor por defecto que se reemplazó (ADR-0003: páginas casi vacías, un PDF de 26 MB con 0 caracteres):
+# esas capturas se vuelven a extraer. El docling opcional usa otros nombres y no entra en este bucle.
+EXTRACTORES_OBSOLETOS = ("docling", "docling+tesseract-spa")
 _AVISADAS: set = set()
 
 
@@ -25,8 +28,9 @@ def _reutilizar(conn: psycopg.Connection, cid, sha: str) -> bool:
     previa = conn.execute(
         "SELECT e.id, e.extractor, e.idioma, e.texto, e.paginas, p.version, p.hallazgos, p.nivel, p.texto_redactado, "
         "p.mapa, p.paginas_redactadas FROM extraction e JOIN pii_scan p ON p.extraction_id = e.id "
-        "JOIN capture c ON c.id = e.capture_id WHERE c.sha256 = %s AND c.id <> %s ORDER BY e.created_at LIMIT 1",
-        (sha, cid),
+        "JOIN capture c ON c.id = e.capture_id WHERE c.sha256 = %s AND c.id <> %s AND e.extractor <> ALL(%s) "
+        "ORDER BY e.created_at DESC, p.created_at DESC LIMIT 1",
+        (sha, cid, list(EXTRACTORES_OBSOLETOS)),
     ).fetchone()
     if previa is None:
         return False
@@ -48,6 +52,60 @@ def _reutilizar(conn: psycopg.Connection, cid, sha: str) -> bool:
     return True
 
 
+def reescanear(conn: psycopg.Connection, detectores: tuple[redaccion.Detector, ...], limite: int = 20) -> int:
+    """Extracciones sin escaneo de datos personales de la versión actual (p. ej. tras corregir un detector): agrega un
+    `pii_scan` nuevo desde el texto original. Nada se modifica; el lector y el visor usan siempre el más reciente."""
+    filas = conn.execute(
+        "SELECT e.id, e.texto, e.paginas, (SELECT p.version FROM pii_scan p WHERE p.extraction_id = e.id "
+        "ORDER BY p.created_at DESC LIMIT 1) FROM extraction e WHERE e.extractor <> ALL(%s) AND NOT EXISTS "
+        "(SELECT 1 FROM pii_scan p WHERE p.extraction_id = e.id AND p.version LIKE %s) ORDER BY e.created_at LIMIT %s",
+        (list(EXTRACTORES_OBSOLETOS), redaccion.VERSION + "%", limite),
+    ).fetchall()
+    for eid, texto, paginas, ultima in filas:
+        tabular = bool(ultima and ultima.endswith("-determinista"))
+        det = redaccion.DETECTORES_DETERMINISTAS if tabular else detectores
+        version = redaccion.VERSION + ("-determinista" if tabular else "")
+        red = redaccion.redactar(texto, det)
+        paginas_red = [
+            {
+                "n": p["n"],
+                "inicio": redaccion.a_redactado(red.mapa, p["inicio"]),
+                "fin": redaccion.a_redactado(red.mapa, p["fin"]),
+            }
+            for p in paginas
+        ]
+        with conn.transaction():
+            pid = conn.execute(
+                "INSERT INTO pii_scan (created_by, extraction_id, version, hallazgos, nivel, texto_redactado, mapa, "
+                "paginas_redactadas) VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+                (
+                    ACTOR,
+                    eid,
+                    version,
+                    Jsonb(red.hallazgos),
+                    red.nivel,
+                    red.texto,
+                    Jsonb(red.mapa_json()),
+                    Jsonb(paginas_red),
+                ),
+            ).fetchone()[0]  # type: ignore[index]
+            auditoria.registrar(
+                conn,
+                ACTOR,
+                "extract.reescanear",
+                f"extraction/{eid}",
+                {
+                    "pii_scan": str(pid),
+                    "version": version,
+                    "anterior": ultima,
+                    "nivel": red.nivel,
+                    "hallazgos": red.hallazgos,
+                },
+            )
+        log.info("reescaneada", extraction=str(eid), version=version, nivel=red.nivel)
+    return len(filas)
+
+
 def procesar_capturas(
     conn: psycopg.Connection,
     raiz: Path,
@@ -57,8 +115,9 @@ def procesar_capturas(
 ) -> int:
     pendientes = conn.execute(
         "SELECT c.id, c.sha256, c.mime, c.url_final FROM capture c WHERE NOT EXISTS "
-        "(SELECT 1 FROM extraction e WHERE e.capture_id = c.id) ORDER BY c.created_at LIMIT %s",
-        (limite,),
+        "(SELECT 1 FROM extraction e WHERE e.capture_id = c.id AND e.extractor <> ALL(%s)) "
+        "ORDER BY c.created_at LIMIT %s",
+        (list(EXTRACTORES_OBSOLETOS), limite),
     ).fetchall()
     hechas = 0
     avisadas = _AVISADAS
@@ -132,4 +191,4 @@ def procesar_capturas(
             )
         log.info("extraída", capture=str(cid), paginas=len(e.paginas), nivel=red.nivel)
         hechas += 1
-    return hechas
+    return hechas + reescanear(conn, detectores, limite)

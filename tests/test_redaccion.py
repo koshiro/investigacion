@@ -22,8 +22,8 @@ def test_run_de_persona_natural_se_redacta():
 
 
 def test_run_sin_puntos_con_espacios_y_k_minuscula_tambien():
-    for variante in ["12345678-5", "12 345 678 - 5", "12.345.678 -5"]:
-        assert "[RUN_1]" in r.redactar(f"RUT {variante} fin").texto, variante
+    for variante in ["12345678-5", "12.345.678-5"]:
+        assert "[RUN_1]" in r.redactar(f"Vecino {variante} fin").texto, variante
     k = f"{5126663}-3"
     assert "[RUN_1]" in r.redactar(f"RUT {k}").texto
 
@@ -34,10 +34,29 @@ def test_rut_de_empresa_puede_quedar():
     assert out.texto == texto and out.nivel == "ninguno"
 
 
-def test_rut_con_digito_verificador_invalido_se_redacta_aunque_parezca_empresa():
-    # 76.123.456-0 tiene dv inválido (el correcto es otro): ante la duda se redacta.
+def test_rut_con_digito_invalido_solo_se_redacta_con_contexto():
     malo = "76.123.456-0" if r.digito_verificador(76123456) != "0" else "76.123.456-1"
-    assert "[RUN_1]" in r.redactar(f"RUT {malo}").texto
+    assert "[RUN_1]" in r.redactar(f"RUT {malo}").texto  # «RUT» delante → en duda, se redacta
+    assert "[RUN_1]" in r.redactar(f"cédula de identidad: {malo}").texto
+    assert malo in r.redactar(f"expediente {malo} del año").texto  # sin contexto es un número cualquiera
+
+
+def test_codigo_bip_y_montos_de_tabla_no_son_run():
+    """Falsos positivos reales del CSV del BIP y de la Programación Financiera de SERVIU (2026-10-28)."""
+    for texto in [
+        "COMPLEMENTARIO: 30403927-0 | No Correspo",
+        "(DS 49) 55.338.159 - 1.813.694 10.386.533 - 2.269.726",
+        "(Cifras en M$) 0 137.107 -0 0 0 0 0 -0 -0",
+        "2023-12345678-5 y 1.234.567-8",
+    ]:
+        assert r.redactar(texto).texto == texto, texto
+
+
+def test_cuerpo_entre_30_y_50_millones_solo_con_contexto():
+    cuerpo = 30_403_927
+    rut = f"{cuerpo}-{r.digito_verificador(cuerpo)}"
+    assert r.redactar(f"código {rut}").texto == f"código {rut}"
+    assert "[RUN_1]" in r.redactar(f"RUN {rut}").texto
 
 
 def test_cifras_con_puntos_no_se_confunden_con_run():

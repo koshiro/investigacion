@@ -4,8 +4,9 @@ Capa determinista (sin modelos, la misma en `extract` y en `llm-gateway`): RUN c
 teléfonos de particulares. Capa de modelos (Presidio + GLiNER, solo en `extract`): nombres y direcciones; se inyecta
 como un detector más. Ante la duda se redacta.
 
-Criterio de RUT: un RUT con cuerpo >= 50.000.000 es de persona jurídica (empresa u órgano del Estado) y puede quedar;
-con cuerpo menor es persona natural (su RUN) y se redacta. Un RUT con dígito verificador inválido se redacta.
+Criterio de RUT: ver `detectar_run`. Un RUT con cuerpo >= 50.000.000 es de persona jurídica y puede quedar; uno válido
+menor a 30.000.000 es un RUN y se redacta; con dígito inválido o entre 30 y 50 millones solo si lo precede
+«RUN/RUT/cédula».
 
 Marcadores estables por documento: la misma persona/valor recibe siempre el mismo marcador (`[PERSONA_3]`).
 `mapa` registra cada reemplazo con sus desplazamientos en el texto redactado y en el original.
@@ -16,8 +17,12 @@ import unicodedata
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 
-VERSION = "redaccion-1"
+VERSION = "redaccion-2"
 LIMITE_PERSONA_JURIDICA = 50_000_000
+# Los RUN de personas naturales llegan hoy a ~28 millones; cuerpos de 30 a 50 millones con dígito válido son casi
+# siempre
+# códigos (p. ej. el código BIP «30403927-0», que usa el mismo módulo 11). Solo se tratan como RUN con contexto.
+LIMITE_RUN_SIN_CONTEXTO = 30_000_000
 DOMINIOS_INSTITUCIONALES = ("gob.cl", "gov.cl", "minvu.cl", "mop.cl", "villarrica.cl", "portaltransparencia.cl")
 
 
@@ -60,7 +65,10 @@ Detector = Callable[[str], list[Hallazgo]]
 
 # --- RUN / RUT ---------------------------------------------------------------------------------------------------
 
-_RUT = re.compile(r"(?<![\w.])(\d{1,2}(?:[.\s]?\d{3}){2})\s?-\s?([\dkK])(?![\w])")
+# Formato real de un RUT: puntos de miles o corrido, y guion PEGADO al dígito verificador. Sin espacios: «55.338.159 -
+# 1.813.694» (resta en una tabla) y «137.107 -0» no son RUT. Medido con el CSV del BIP y una tabla financiera real.
+_RUT = re.compile(r"(?<![\w.,-])(\d{1,2}(?:\.\d{3}){2}|\d{7,8})-([\dkK])(?![\w-])")
+_CONTEXTO_RUT = re.compile(r"(?i)\b(?:run|rut|c[eé]dula|c\.?\s?i\.?|identidad)\W{0,12}$")
 
 
 def digito_verificador(cuerpo: int) -> str:
@@ -73,13 +81,21 @@ def digito_verificador(cuerpo: int) -> str:
 
 
 def detectar_run(texto: str) -> list[Hallazgo]:
+    """RUN de persona natural. Criterio (con evidencia en docs/FASE-2.md):
+    - dígito verificador válido y cuerpo < 30 M → RUN (se redacta);
+    - cuerpo ≥ 50 M válido → persona jurídica, puede quedar;
+    - cuerpo entre 30 y 50 M válido, o dígito inválido → solo es RUN si lo precede «RUN», «RUT», «cédula»…
+    """
     salida = []
     for m in _RUT.finditer(texto):
         cuerpo = int(re.sub(r"\D", "", m.group(1)))
         dv = m.group(2).upper()
         valido = digito_verificador(cuerpo) == dv
+        contexto = bool(_CONTEXTO_RUT.search(texto[max(0, m.start() - 24) : m.start()]))
         if valido and cuerpo >= LIMITE_PERSONA_JURIDICA:
             continue  # empresa u órgano público: puede quedar
+        if not contexto and (not valido or cuerpo >= LIMITE_RUN_SIN_CONTEXTO):
+            continue  # un número cualquiera o un código, no un RUN
         salida.append(Hallazgo(m.start(), m.end(), "RUN", f"{cuerpo}-{dv}"))
     return salida
 

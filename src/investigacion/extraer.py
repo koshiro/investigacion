@@ -216,10 +216,10 @@ def extraer_pdf_docling(datos: bytes, ocr: bool = True) -> Extraido:  # pragma: 
     total = len(pypdfium2.PdfDocument(datos))
     sin_ocr = _conversor(ocr=False)
     textos = {n: pagina(sin_ocr, n) for n in range(1, total + 1)}
-    extractor = "docling"
+    extractor = "docling-opcional"
     escasas = [n for n, t in textos.items() if ocr and len(t.strip()) < MIN_CARACTERES_PAGINA]
     if escasas:
-        extractor = "docling+tesseract-spa"
+        extractor = "docling-opcional+tesseract-spa"
         con_ocr = _conversor(ocr=True)
         for n in escasas:
             if (t := pagina(con_ocr, n)).strip():
