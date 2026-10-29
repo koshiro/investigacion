@@ -7,6 +7,7 @@
 """
 
 import json
+import secrets
 import threading
 import time
 from urllib.parse import quote
@@ -27,12 +28,28 @@ SHA = "cd" + "e" * 62
 
 
 def _login(pg, nombre: str, grupo: str) -> str:
+    """Login de prueba con clave generada en ejecución (en CI Postgres va por TCP con contraseña)."""
+    clave = secrets.token_hex(16)
     pg.su.execute(
         f"DO $$ BEGIN CREATE ROLE {nombre} LOGIN IN ROLE {grupo}; EXCEPTION WHEN duplicate_object THEN NULL; END $$"  # type: ignore[arg-type]
     )
+    pg.su.execute(f"ALTER ROLE {nombre} PASSWORD '{clave}'")  # type: ignore[arg-type]
     # DBOS (SQLAlchemy) exige URL, no DSN clave=valor: como el URI de CNPG en el cluster.
     d = psycopg.conninfo.conninfo_to_dict(pg.url)
-    return f"postgresql://{nombre}@/{d['dbname']}?host={quote(str(d['host']))}"
+    host, puerto, base = str(d.get("host") or "localhost"), d.get("port") or "5432", d["dbname"]
+    if host.startswith("/"):
+        return f"postgresql://{nombre}:{clave}@/{base}?host={quote(host)}&port={puerto}"
+    return f"postgresql://{nombre}:{clave}@{host}:{puerto}/{base}"
+
+
+def _resultado(wf: str, plazo_s: float = 60):
+    """get_result con plazo: si el flujo se cuelga, la prueba falla en vez de bloquear el CI."""
+    fin = time.monotonic() + plazo_s
+    h = DBOS.retrieve_workflow(wf)
+    while h.get_status().status in ("PENDING", "ENQUEUED"):
+        assert time.monotonic() < fin, f"flujo {wf} sigue en {h.get_status().status}"
+        time.sleep(0.2)
+    return h.get_result()
 
 
 PLAN = {
@@ -105,7 +122,7 @@ def test_sin_aprobacion_no_corre_nada_y_al_aprobar_corre_lo_permitido(worker):
 
     _decidir(pg, plan_id, "aprobada")
     assert _despertar(pg) == 1
-    assert DBOS.retrieve_workflow(wf).get_result() == "hecho"
+    assert _resultado(wf) == "hecho"
     filas = pg.su.execute("SELECT orden, estado, salida, error FROM task ORDER BY orden").fetchall()
     assert filas[0][1] == "hecha" and [f[0] for f in filas[0][2]] == [f"H{n}" for n in range(1, 8)]
     assert filas[1][1] == "cancelada" and "lector no puede usar search_web" in filas[1][3]
@@ -121,7 +138,7 @@ def test_plan_rechazado_cancela_todo(worker):
     _, wf, plan_id = _pedir_plan(pg)
     _decidir(pg, plan_id, "rechazada")
     _despertar(pg)
-    assert DBOS.retrieve_workflow(wf).get_result() == "rechazado"
+    assert _resultado(wf) == "rechazado"
     assert {r[0] for r in pg.su.execute("SELECT estado FROM task")} == {"cancelada"}
     assert pg.su.execute("SELECT used_at FROM approval").fetchone()[0] is None
 
@@ -168,7 +185,7 @@ def test_descubrimiento_propone_el_canal_con_su_captura_y_cita(worker):
     hilo = threading.Thread(target=_simular_capturas, args=(pg, parar, lambda url: pagina), daemon=True)
     hilo.start()
     try:
-        salida = DBOS.start_workflow(flujos.flujo_descubrir, inv, "Municipalidad de Villarrica").get_result()
+        salida = _resultado(DBOS.start_workflow(flujos.flujo_descubrir, inv, "Municipalidad de Villarrica").workflow_id)
     finally:
         parar.set()
     assert salida["urls"] == ["https://www.villarrica.cl/transparencia"]
@@ -190,7 +207,7 @@ def test_inventario_marca_cada_dominio_con_evidencia(worker):
     )
     hilo.start()
     try:
-        DBOS.start_workflow(flujos.flujo_inventario, inv).get_result()
+        _resultado(DBOS.start_workflow(flujos.flujo_inventario, inv).workflow_id)
     finally:
         parar.set()
     estados = dict(pg.su.execute("SELECT dominio, estado FROM source_domain WHERE cliente = 'capture'").fetchall())
