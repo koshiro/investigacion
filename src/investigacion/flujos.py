@@ -32,6 +32,10 @@ ESPERA_APROBACION_S = 3600
 MAX_ESPERAS = 24 * 14  # dos semanas; después el flujo se cierra sin ejecutar
 ESPERA_CAPTURAS_S = 20
 MAX_ESPERA_CAPTURAS = 90  # ~30 minutos
+# Versión fija de los flujos: por defecto DBOS usa un hash del código y un despliegue dejaría huérfano un plan que
+# espera la aprobación de Daniel (días). Subirla SOLO si cambia el orden o el nombre de los pasos de un flujo: los
+# flujos en curso con la versión anterior quedan sin retomar (se vuelve a pedir el plan).
+VERSION_FLUJOS = "fase2-1"
 
 
 @dataclass
@@ -568,7 +572,14 @@ def paso_borrador(investigation_id: str, organismo: str, pedido: str) -> tuple[d
 
 def iniciar(system_url: str, entorno: Entorno, esquema: str = "dbos_worker") -> None:
     configurar(entorno)
-    DBOS(config={"name": "investigacion-worker", "system_database_url": system_url, "dbos_system_schema": esquema})
+    DBOS(
+        config={
+            "name": "investigacion-worker",
+            "system_database_url": system_url,
+            "dbos_system_schema": esquema,
+            "application_version": VERSION_FLUJOS,
+        }
+    )
     DBOS.launch()
     DBOS.register_queue(COLA, worker_concurrency=1)  # un flujo de agentes a la vez: acota el gasto y la carga
 
