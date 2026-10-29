@@ -15,7 +15,8 @@ bueno) y tres acciones suyas (ver «Qué debe hacer Daniel»).
 | `lector` | CronJob suspendido; **ejecutado a mano sobre las 10 capturas** (resultados abajo) | `investigacion lector --pendientes` |
 | Eval Citations vs JSON | **ejecutado contra la API real** (resultados abajo) | `src/investigacion/eval_lector.py` |
 
-Imagen en producción: `sha-cbf964d` (ambas; el tope de tamaño del lector llega en la siguiente). 203 pruebas pasan en el CI (Postgres real); las de docling y GLiNER corren
+Imagen en producción: `sha-935f48f` (ambas, con el tope de tamaño del lector verificado en vivo: el CSV de 7 M de caracteres
+se rechaza sin llamar a la API). 203 pruebas pasan en el CI (Postgres real); las de docling y GLiNER corren
 con el extra `extract` en local.
 
 ## Qué debe hacer Daniel (en orden)
@@ -112,6 +113,8 @@ Se descubrieron por usar fuentes y la API reales; ninguno lo mostraban las prueb
   PDF totalmente escaneado**.
 - **Cifras escritas en palabras** («veinte días») no coinciden con la cifra declarada en dígitos y la cita se rechaza.
 - **El lector no cubre documentos de más de 300.000 caracteres** (CSV masivos): van por el camino determinista.
+- **Capturas duplicadas**: `lector --pendientes` lee también la segunda captura del mismo archivo (Cuenta Pública) y
+  genera una ficha repetida; conviene deduplicar por SHA-256.
 - **Autoridades**: GLiNER redacta también nombres de autoridades en ejercicio (la especificación permite dejarlos).
 - **Tablas de PDF** salen en el orden del flujo, no como celdas; una cita que cruce celdas queda en `revisar`.
 - **Una cita literal del texto inyectado sí verifica**: el verificador prueba que la cita existe, no que sea cierta ni
