@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block titulo %}{{ tipos[obj.tipo] }}{% endblock %}
+{% block contenido %}
+<p><a href="/aprobaciones">← Aprobaciones</a></p>
+<h1>{{ obj.titulo }}</h1>
+<p class="tenue">{{ tipos[obj.tipo] }} · hash <code>{{ obj.hash }}</code></p>
+{% for texto, url in obj.enlaces %}<a href="{{ url }}">{{ texto }}</a>{% if not loop.last %} · {% endif %}{% endfor %}
+
+{% if obj.diff %}
+<h2>Cambios respecto de la versión anterior</h2>
+<pre class="texto">{{ obj.diff }}</pre>
+{% endif %}
+<h2>Contenido exacto que apruebas</h2>
+<pre class="texto">{{ obj.contenido }}</pre>
+
+{% if previas %}
+<h2>Decisiones anteriores</h2>
+<ul>{% for p in previas %}<li>{{ p[0].strftime("%Y-%m-%d %H:%M") }}: {{ p[1] }}{% if p[2] %} (usada {{ p[2].strftime("%Y-%m-%d %H:%M") }}){% endif %}{% if p[3] %} — {{ p[3] }}{% endif %}</li>{% endfor %}</ul>
+{% else %}
+<h2>Decidir</h2>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<form method="post" action="/aprobaciones/{{ obj.tipo }}/{{ obj.id }}" class="columna">
+  <input type="hidden" name="csrf" value="{{ s.csrf }}">
+  <input type="hidden" name="content_hash" value="{{ obj.hash }}">
+  <label>Comentario (opcional)<textarea name="comentario" maxlength="2000" rows="3"></textarea></label>
+  <label>Código TOTP<input name="codigo" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" required></label>
+  <div class="en-fila">
+    <button type="submit" name="decision" value="aprobada">Aprobar</button>
+    <button type="submit" name="decision" value="rechazada">Rechazar</button>
+  </div>
+</form>
+{% endif %}
+{% endblock %}
