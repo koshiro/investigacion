@@ -8,6 +8,8 @@ import pytest
 from investigacion import db
 
 URL_ADMIN = os.environ.get("INVESTIGACION_TEST_DATABASE_URL")
+DUENO = "inv_dueno_pruebas"
+ROLES_SERVICIO = ("inv_web", "inv_capture", "inv_extract", "inv_worker", "inv_gateway", "inv_verificador")
 
 
 def _con_base(url: str, base: str) -> str:
@@ -26,7 +28,12 @@ def pg():
         pytest.skip("sin INVESTIGACION_TEST_DATABASE_URL (ver scripts/pg-local.py)")
     nombre = f"t_{uuid.uuid4().hex[:12]}"
     with psycopg.connect(URL_ADMIN, autocommit=True) as admin:
-        admin.execute(f'CREATE DATABASE "{nombre}"')  # type: ignore[arg-type]
+        # Como en el cluster: los roles inv_* ya existen y el dueño de la base NO es superusuario ni CREATEROLE.
+        for rol in (DUENO, *ROLES_SERVICIO):
+            admin.execute(
+                f"DO $$ BEGIN CREATE ROLE {rol} NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$"  # type: ignore[arg-type]
+            )
+        admin.execute(f'CREATE DATABASE "{nombre}" OWNER {DUENO}')  # type: ignore[arg-type]
     url = _con_base(URL_ADMIN, nombre)
     conexiones: list[psycopg.Connection] = []
 
@@ -38,7 +45,10 @@ def pg():
         return conn
 
     su = conectar()
+    su.execute("CREATE EXTENSION IF NOT EXISTS vector")  # en el cluster la crea CNPG al iniciar la base
+    su.execute(f"SET ROLE {DUENO}")  # type: ignore[arg-type]
     db.migrar(su)
+    su.execute("RESET ROLE")
     su.autocommit = True
     yield type("PG", (), {"conectar": staticmethod(conectar), "su": su, "url": url})
     for c in conexiones:

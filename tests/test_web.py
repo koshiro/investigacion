@@ -117,9 +117,10 @@ def test_login_y_fallos_quedan_en_la_auditoria_y_la_cadena_valida(sitio):
 
 def test_post_sin_csrf_o_con_csrf_ajeno_se_rechaza(sitio):
     _entrar(sitio)
+    antes = sitio.pg.su.execute("SELECT count(*) FROM investigation").fetchone()[0]  # la semilla de Villarrica
     assert sitio.c.post("/investigaciones", data={"titulo": "t", "pregunta": "p"}).status_code == 422
     assert sitio.c.post("/investigaciones", data={"titulo": "t", "pregunta": "p", "csrf": "x" * 40}).status_code == 403
-    assert sitio.pg.su.execute("SELECT count(*) FROM investigation").fetchone()[0] == 0
+    assert sitio.pg.su.execute("SELECT count(*) FROM investigation").fetchone()[0] == antes
 
 
 def test_crear_investigacion_y_pedir_captura(sitio):
