@@ -86,13 +86,18 @@ class ClienteAnthropic(Protocol):
 
 
 def crear_cliente_anthropic(api_key: str, proxy_url: str):
-    """Cliente del SDK que sale SOLO por el proxy con lista blanca; sin proxy no se construye."""
+    """Cliente del SDK que sale SOLO por el proxy con lista blanca; sin proxy no se construye.
+
+    El SDK usa `httpx2`: pasarle un `httpx.Client` lanza TypeError (visto en el cluster, no con el doble).
+    """
     import anthropic
 
     if not proxy_url or not api_key:
         raise ValueError("llm-gateway exige ANTHROPIC_API_KEY y proxy_url (sin salida directa)")
     return anthropic.Anthropic(
-        api_key=api_key, http_client=httpx.Client(proxy=proxy_url, trust_env=False, timeout=120.0), max_retries=2
+        api_key=api_key,
+        http_client=anthropic.DefaultHttpxClient(proxy=proxy_url, trust_env=False, timeout=120.0),
+        max_retries=2,
     )
 
 

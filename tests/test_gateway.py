@@ -160,3 +160,12 @@ def test_rol_del_gateway_solo_escribe_llm_call(pg):
         c.execute("SELECT * FROM pii_scan")
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         c.execute("UPDATE llm_call SET costo_usd = 0")
+
+
+def test_el_cliente_real_se_construye_con_proxy_y_usa_httpx2():
+    """Regresión del 2026-10-29: con httpx.Client el gateway moría al arrancar en el cluster."""
+    import anthropic
+
+    c = gateway.crear_cliente_anthropic("sk-ant-prueba", "http://usuario:clave@proxy:3128")
+    assert isinstance(c, anthropic.Anthropic)
+    assert type(c._client).__module__.startswith(("httpx2", "anthropic"))
