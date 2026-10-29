@@ -187,10 +187,12 @@ def leer(
 
 
 def pendientes(conn: psycopg.Connection, limite: int = 20) -> list[str]:
-    """Capturas con extracción, sin ficha y no aisladas (nivel alto espera aprobación)."""
+    """Capturas sin ficha cuyo ESCANEO MÁS RECIENTE no es de nivel alto (alto espera la aprobación de Daniel)."""
     filas = conn.execute(
-        "SELECT DISTINCT c.id, c.created_at FROM capture c JOIN extraction e ON e.capture_id = c.id "
-        "JOIN pii_scan p ON p.extraction_id = e.id WHERE p.nivel <> 'alto' AND e.extractor <> 'no-soportado' "
+        "SELECT c.id FROM capture c JOIN LATERAL (SELECT p.nivel, e.extractor FROM pii_scan p "
+        "JOIN extraction e ON e.id = p.extraction_id WHERE e.capture_id = c.id "
+        "ORDER BY p.created_at DESC LIMIT 1) u ON true "
+        "WHERE u.nivel <> 'alto' AND u.extractor <> 'no-soportado' "
         "AND NOT EXISTS (SELECT 1 FROM card k WHERE k.capture_id = c.id) ORDER BY c.created_at LIMIT %s",
         (limite,),
     ).fetchall()

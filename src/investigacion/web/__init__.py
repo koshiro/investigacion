@@ -169,8 +169,9 @@ def crear_app(cfg: Configuracion) -> FastAPI:
         if inv is None:
             raise HTTPException(404)
         capturas = conn.execute(
-            "SELECT c.id, c.url_final, c.mime, c.tamano, c.sha256, c.fetched_at, p.nivel FROM capture c "
-            "LEFT JOIN extraction e ON e.capture_id = c.id LEFT JOIN pii_scan p ON p.extraction_id = e.id "
+            "SELECT c.id, c.url_final, c.mime, c.tamano, c.sha256, c.fetched_at, u.nivel FROM capture c "
+            "LEFT JOIN LATERAL (SELECT p.nivel FROM pii_scan p JOIN extraction e ON e.id = p.extraction_id "
+            "WHERE e.capture_id = c.id ORDER BY p.created_at DESC LIMIT 1) u ON true "
             "WHERE c.investigation_id = %s ORDER BY c.fetched_at DESC",
             (iid,),
         ).fetchall()

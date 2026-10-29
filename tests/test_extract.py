@@ -170,3 +170,71 @@ def test_mismo_archivo_en_dos_capturas_se_extrae_una_vez_y_se_copia(pg, tmp_path
     assert pg.su.execute("SELECT count(DISTINCT texto_redactado) FROM pii_scan").fetchone()[0] == 1
     assert pg.su.execute("SELECT count(*) FROM audit_log WHERE accion = 'extract.reutilizar'").fetchone()[0] == 1
     assert auditoria.verificar(pg.su).ok
+
+
+def _insertar_extraccion_vieja(pg, cid, extractor, version, nivel, texto):
+    """Simula lo que dejó una versión anterior del servicio (filas aditivas, como en producción)."""
+    eid = pg.su.execute(
+        "INSERT INTO extraction (created_by, capture_id, extractor, idioma, texto, paginas) "
+        "VALUES ('service:extract', %s, %s, 'es', %s, %s) RETURNING id",
+        (cid, extractor, texto, f'[{{"n": 1, "inicio": 0, "fin": {len(texto)}}}]'),
+    ).fetchone()[0]
+    pg.su.execute(
+        "INSERT INTO pii_scan (created_by, extraction_id, version, nivel, texto_redactado, paginas_redactadas) "
+        "VALUES ('service:extract', %s, %s, %s, %s, %s)",
+        (eid, version, nivel, texto, f'[{{"n": 1, "inicio": 0, "fin": {len(texto)}}}]'),
+    )
+    return eid
+
+
+def test_extraccion_del_motor_obsoleto_se_vuelve_a_extraer_y_la_nueva_manda(pg, tmp_path):
+    cid = _captura(pg, tmp_path, TEXTO.encode())
+    _insertar_extraccion_vieja(pg, cid, "docling+tesseract-spa", "redaccion-1", "ninguno", "")
+    assert extract.procesar_capturas(pg.conectar("inv_extract"), tmp_path) >= 1
+    extractores = [
+        e
+        for (e,) in pg.su.execute("SELECT extractor FROM extraction WHERE capture_id = %s ORDER BY created_at", (cid,))
+    ]
+    assert extractores == ["docling+tesseract-spa", "extractor-1"]
+    ultimo = pg.su.execute(
+        "SELECT p.nivel, length(p.texto_redactado) FROM pii_scan p JOIN extraction e ON e.id = p.extraction_id "
+        "WHERE e.capture_id = %s ORDER BY p.created_at DESC LIMIT 1",
+        (cid,),
+    ).fetchone()
+    assert ultimo[0] == "alto" and ultimo[1] > 0  # el escaneo más reciente es el de la extracción buena
+
+
+def test_reescaneo_con_detector_corregido_baja_un_falso_alto(pg, tmp_path):
+    texto = "COMPLEMENTARIO: 30403927-0 | Mejoramiento de la plaza (código de proyecto)\n"
+    cid = _captura(pg, tmp_path, texto.encode())
+    eid = _insertar_extraccion_vieja(pg, cid, "extractor-1", "redaccion-1", "alto", texto)
+    assert extract.procesar_capturas(pg.conectar("inv_extract"), tmp_path) >= 1
+    versiones = [
+        (v, n)
+        for v, n in pg.su.execute(
+            "SELECT version, nivel FROM pii_scan WHERE extraction_id = %s ORDER BY created_at", (eid,)
+        )
+    ]
+    assert versiones == [("redaccion-1", "alto"), (redaccion.VERSION, "ninguno")]
+    assert pg.su.execute("SELECT count(*) FROM audit_log WHERE accion = 'extract.reescanear'").fetchone()[0] == 1
+    # El lector ya la ve como no aislada (usa el escaneo más reciente).
+    from investigacion import lector
+
+    assert lector.pendientes(pg.conectar("inv_worker")) == [str(cid)]
+    assert auditoria.verificar(pg.su).ok
+
+
+def test_un_escaneo_viejo_no_aislado_no_salva_a_una_captura_ahora_alta(pg, tmp_path):
+    from investigacion import lector
+
+    texto = "Contacto del vecino RUN 12.345.678-5 por el reclamo.\n"
+    cid = _captura(pg, tmp_path, texto.encode())
+    eid = _insertar_extraccion_vieja(pg, cid, "extractor-1", "redaccion-1", "ninguno", texto)
+    extract.procesar_capturas(pg.conectar("inv_extract"), tmp_path)
+    assert (
+        pg.su.execute(
+            "SELECT nivel FROM pii_scan WHERE extraction_id = %s ORDER BY created_at DESC LIMIT 1", (eid,)
+        ).fetchone()[0]
+        == "alto"
+    )
+    assert lector.pendientes(pg.conectar("inv_worker")) == []
