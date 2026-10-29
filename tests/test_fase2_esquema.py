@@ -71,8 +71,9 @@ def test_semillas_de_villarrica(pg):
     assert codigos == [f"H{n}" for n in range(1, 8)]
     assert pg.su.execute("SELECT count(*) FROM organization").fetchone()[0] == 4
     assert pg.su.execute("SELECT count(*) FROM organization_contact").fetchone()[0] == 0  # se descubren, no se siembran
-    pendientes = {r[0] for r in pg.su.execute("SELECT dominio FROM source_domain WHERE NOT en_lista")}
-    assert pendientes == {"www.portaltransparencia.cl", "www.bcn.cl", "www.gorearaucania.cl"}
+    # 0008 los agrega a la lista para el inventario (antes estaban pendientes).
+    assert pg.su.execute("SELECT count(*) FROM source_domain WHERE NOT en_lista").fetchone()[0] == 0
+    assert pg.su.execute("SELECT count(*) FROM source_domain WHERE estado = 'pendiente'").fetchone()[0] == 17
 
 
 # --- approval ---------------------------------------------------------------------------------------------------------

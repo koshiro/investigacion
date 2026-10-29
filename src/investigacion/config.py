@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     # llm-gateway: único con la clave de la API; sale solo por el proxy (usuario llm-gateway).
     anthropic_api_key: str = ""
     modelo_lector: str = "claude-haiku-5-5"
+    # Fase 2: un modelo por rol (especificación, «Agentes»); el verificador usa uno distinto del que escribió.
+    modelo_investigador: str = "claude-sonnet-5-5"
+    modelo_redactor: str = "claude-sonnet-5-5"
+    modelo_verificador: str = "claude-opus-5-5"
     # Tope propio opcional por mes (USD). Daniel fija el límite duro en la consola de Anthropic.
     tope_mensual_usd: float | None = None
     # worker/lector: dónde está el gateway (Service interno).
@@ -29,6 +33,14 @@ class Settings(BaseSettings):
 
     # El lector escribe citas con el rol worker y las verifica con el rol verificador (credenciales distintas).
     verificador_database_url: str = ""
+
+    # worker: SearXNG interno (solo título y URL) y datos del solicitante para las solicitudes (artículo 12 de la
+    # Ley 20.285). Los datos del solicitante los agrega el código DESPUÉS del modelo: nunca salen hacia la API.
+    searxng_url: str = "http://searxng:8080"
+    solicitante_nombre: str = ""
+    solicitante_correo: str = ""
+    # Cada cuánto el worker busca aprobaciones nuevas para despertar a los flujos que esperan (DBOS.send).
+    despertador_s: float = 30.0
 
     # web: clave para tokens CSRF, secreto TOTP del único usuario (ambos del Secret) y cookie Secure (solo con HTTPS).
     web_clave: str = ""

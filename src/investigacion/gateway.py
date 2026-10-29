@@ -57,7 +57,7 @@ class Solicitud(BaseModel):
     """Contrato de entrada. Sin `tools` ni `modelo`: el gateway decide el modelo por rol."""
 
     model_config = ConfigDict(extra="forbid")
-    rol: Literal["lector"]
+    rol: Literal["lector", "investigador", "redactor", "verificador"]
     sistema: str
     documentos: list[Documento] = Field(max_length=20)
     instruccion: str

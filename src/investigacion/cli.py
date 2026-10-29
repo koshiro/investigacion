@@ -35,6 +35,7 @@ def main(argv: list[str] | None = None) -> None:
     p_lector.add_argument("capture_id", nargs="?")
     p_lector.add_argument("--pendientes", action="store_true", help="todas las capturas sin ficha y no aisladas")
     p_lector.add_argument("--estrategia", choices=["json", "citas"], default="json")
+    sub.add_parser("worker", help="flujos DBOS de los agentes (plan aprobado, descubrimiento, inventario, lector)")
     sub.add_parser("eval-lector", help="compara las dos estrategias del lector con la API real (cuesta centavos)")
     sub.add_parser("web", help="interfaz web (NodePort 30960): login con argon2 + TOTP, investigaciones y visor")
     p_usuario = sub.add_parser("crear-usuario", help="crea el usuario único; imprime el secreto TOTP una sola vez")
@@ -65,6 +66,8 @@ def main(argv: list[str] | None = None) -> None:
                 raise SystemExit("indica un capture_id o --pendientes")
             for cid in ids:
                 sys.stdout.write(f"{cid}: {lector.leer(w, v, gw, cid, args.estrategia)}\n")
+    elif args.comando == "worker":
+        servicio_worker(settings)
     elif args.comando == "eval-lector":
         evaluar_lector(settings)
     elif args.comando == "web":
@@ -82,6 +85,24 @@ def main(argv: list[str] | None = None) -> None:
         for p in problemas:
             sys.stdout.write(f"{p.capture_id}: {p.motivo}\n")
         sys.exit(1 if problemas else 0)
+
+
+def servicio_worker(settings: Settings) -> None:
+    from investigacion import buscador, flujos
+
+    if not settings.verificador_database_url:
+        raise SystemExit("worker exige INVESTIGACION_VERIFICADOR_DATABASE_URL (rol distinto para verificar citas)")
+    entorno = flujos.Entorno(
+        worker_url=settings.database_url,
+        verificador_url=settings.verificador_database_url,
+        gateway=gateway.ClienteGateway(settings.gateway_url),
+        buscador=buscador.Buscador(settings.searxng_url),
+        solicitante={"nombre": settings.solicitante_nombre, "correo": settings.solicitante_correo},
+    )
+    # Los checkpoints de DBOS van al esquema dbos_worker de la misma base, con el rol del worker.
+    flujos.iniciar(settings.database_url, entorno)
+    parar = threading.Event()
+    flujos.despertador(settings.database_url, settings.despertador_s, parar)
 
 
 def servicio_capture(settings: Settings) -> None:
@@ -108,7 +129,13 @@ def servicio_extract(settings: Settings) -> None:
 
 def _gateway(settings: Settings, conn: psycopg.Connection) -> gateway.Gateway:
     cliente = gateway.crear_cliente_anthropic(settings.anthropic_api_key, settings.proxy_url)
-    return gateway.Gateway(cliente, conn, {"lector": settings.modelo_lector}, settings.tope_mensual_usd)
+    modelos = {
+        "lector": settings.modelo_lector,
+        "investigador": settings.modelo_investigador,
+        "redactor": settings.modelo_redactor,
+        "verificador": settings.modelo_verificador,
+    }
+    return gateway.Gateway(cliente, conn, modelos, settings.tope_mensual_usd)
 
 
 def servicio_gateway(settings: Settings) -> None:

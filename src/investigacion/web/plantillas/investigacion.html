@@ -5,6 +5,43 @@
 <p>{{ inv[2] }}</p>
 <p class="tenue">{{ inv[4] or "" }} {{ inv[3] or "" }} · {{ inv[5] }}</p>
 
+<h2>Plan de los agentes</h2>
+<form method="post" action="/investigaciones/{{ inv[0] }}/plan" class="en-linea">
+  <input type="hidden" name="csrf" value="{{ s.csrf }}">
+  <button type="submit">Proponer plan</button>
+</form>
+<span class="tenue">El investigador propone; nada se ejecuta hasta que lo apruebes en <a href="/aprobaciones">Aprobaciones</a>.</span>
+{% if pedidos %}<ul>{% for p in pedidos %}<li>{{ p[0].strftime("%Y-%m-%d %H:%M") }}: {{ "iniciado (" ~ p[1] ~ ")" if p[2] else "en cola del worker" }}</li>{% endfor %}</ul>{% endif %}
+{% if tareas %}
+<table>
+  <thead><tr><th>#</th><th>Rol</th><th>Herramienta</th><th>Objetivo</th><th>Estado</th><th>USD</th></tr></thead>
+  <tbody>
+  {% for t in tareas %}
+    <tr><td>{{ t[0] }}</td><td>{{ t[1] }}</td><td><code>{{ t[2] }}</code></td><td>{{ t[3] }}{% if t[5] %}<br><span class="error">{{ t[5] }}</span>{% endif %}</td>
+      <td>{{ t[4] }}</td><td>{{ "%.4f"|format(t[6]) }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if hallazgos %}
+<h2>Hallazgos</h2>
+<ul>{% for h in hallazgos %}<li>{{ h[0] }}: {{ h[2] }} {{ h[1] }}</li>{% endfor %}</ul>
+{% endif %}
+
+{% if canales %}
+<h2>Canales de transparencia</h2>
+<table>
+  <thead><tr><th>Organismo</th><th>Canal</th><th>Dirección</th><th>Tipo</th><th>Estado</th></tr></thead>
+  <tbody>{% for c in canales %}<tr><td>{{ c[0] }}</td><td>{{ c[1] }}</td><td>{{ c[2] }}</td><td>{{ c[3] }}</td><td>{{ c[4] }}</td></tr>{% endfor %}</tbody>
+</table>
+{% endif %}
+
+{% if borradores %}
+<h2>Borradores de solicitudes</h2>
+<ul>{% for b in borradores %}<li><a href="/aprobaciones/request/{{ b[0] }}">{{ b[1] }}: {{ b[2] }}</a> ({{ b[3] }})</li>{% endfor %}</ul>
+{% endif %}
+
 <h2>Capturar una URL</h2>
 <form method="post" action="/investigaciones/{{ inv[0] }}/capturar" class="en-fila">
   <input type="hidden" name="csrf" value="{{ s.csrf }}">

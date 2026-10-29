@@ -87,8 +87,15 @@ def cargar(conn: psycopg.Connection, tipo: str, oid: str) -> Objeto | None:
             f"Validación en código: {_json(f[8])}",
             f"Estado actual: {f[10]}",
         ]
-        return Objeto(tipo, oid, f"Canal de transparencia · {f[0]}", "\n".join(lineas), f[9], None,
-                      [("Ver la captura", f"/capturas/{f[5]}")])  # fmt: skip
+        return Objeto(
+            tipo,
+            oid,
+            f"Canal de transparencia · {f[0]}",
+            "\n".join(lineas),
+            f[9],
+            None,
+            [("Ver la captura", f"/capturas/{f[5]}")],
+        )
     if tipo == "finding":
         f = conn.execute(
             "SELECT f.enunciado, f.tipo, h.codigo, f.limitaciones, f.content_hash, f.estado FROM finding f "
@@ -102,8 +109,14 @@ def cargar(conn: psycopg.Connection, tipo: str, oid: str) -> Objeto | None:
             "ORDER BY created_at",
             (oid,),
         ).fetchall()
-        lineas = [f"Enunciado: {f[0]}", f"Tipo: {f[1]}", f"Hipótesis: {f[2] or '—'}", f"Estado: {f[5]}",
-                  f"Limitaciones: {_json(f[3])}", "Citas:"]  # fmt: skip
+        lineas = [
+            f"Enunciado: {f[0]}",
+            f"Tipo: {f[1]}",
+            f"Hipótesis: {f[2] or '—'}",
+            f"Estado: {f[5]}",
+            f"Limitaciones: {_json(f[3])}",
+            "Citas:",
+        ]
         lineas += [
             f"- [{c[3]}{f' {c[4]:.3f}' if c[4] is not None else ''}] captura {c[0]} p. {c[1] or '?'}: «{c[2]}»"
             for c in citas
@@ -120,10 +133,19 @@ def cargar(conn: psycopg.Connection, tipo: str, oid: str) -> Objeto | None:
         if f is None:
             return None
         texto = f[0] if len(f[0]) <= MAX_TEXTO else f[0][:MAX_TEXTO] + "\n[… recortado en la vista; el hash cubre todo]"
-        contenido = f"Captura: {f[3]} ({f[4]})\nDatos personales detectados: {_json(f[2])}\n\nTexto redactado que " \
-                    f"llegaría al lector:\n{texto}"  # fmt: skip
-        return Objeto(tipo, oid, f"Liberar captura aislada · {f[4][:80]}", contenido, f[1], None,
-                      [("Ver la captura", f"/capturas/{f[3]}")])  # fmt: skip
+        contenido = (
+            f"Captura: {f[3]} ({f[4]})\nDatos personales detectados: {_json(f[2])}\n\nTexto redactado que "
+            f"llegaría al lector:\n{texto}"
+        )
+        return Objeto(
+            tipo,
+            oid,
+            f"Liberar captura aislada · {f[4][:80]}",
+            contenido,
+            f[1],
+            None,
+            [("Ver la captura", f"/capturas/{f[3]}")],
+        )
     if tipo == "request":
         f = conn.execute(
             "SELECT o.nombre, k.correo, k.url_portal, r.asunto, r.cuerpo, r.content_hash, a.asunto, a.cuerpo "
