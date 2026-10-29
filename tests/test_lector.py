@@ -228,3 +228,28 @@ def test_pendientes_salta_aisladas_y_capturas_ya_leidas(pg, tmp_path):
     assert lector.pendientes(w) == [limpia]
     _leer(pg, FakeAnthropic(texto(_ficha())), limpia)
     assert lector.pendientes(w) == []
+
+
+def test_el_esquema_para_la_api_no_trae_restricciones_que_la_api_rechaza():
+    """Regresión del 2026-10-29: la API respondió 400 «property 'maxItems' is not supported» con el esquema crudo."""
+    import json as _json
+
+    crudo = _json.dumps(lector.Ficha.model_json_schema())
+    api = lector.esquema_api()
+    texto = _json.dumps(api)
+    assert "maxItems" in crudo and "maxLength" in crudo  # el esquema de Pydantic sí las lleva
+    for prohibido in ("maxItems", "minItems", "maxLength", "minLength", "minimum", "maximum"):
+        assert f'"{prohibido}"' not in texto, prohibido
+    assert api["additionalProperties"] is False
+    # Pydantic sigue imponiendo los límites al validar la respuesta.
+    with pytest.raises(Exception):  # noqa: B017
+        lector.Ficha.model_validate({"hechos": [{"tipo": "hecho", "enunciado": "x" * 601, "cita": {"texto": "c"}}]})
+
+
+def test_la_solicitud_del_lector_pide_el_esquema_de_la_api_y_mas_tokens(pg, tmp_path):
+    cid = _preparar(pg, tmp_path, "Se aprueba un monto de $ 1.000 para la obra.\n")
+    fake = FakeAnthropic(texto(_ficha()))
+    _leer(pg, fake, cid)
+    p = fake.messages.recibido[0]
+    assert p["max_tokens"] == lector.MAX_TOKENS_FICHA
+    assert p["output_config"]["format"]["schema"] == lector.esquema_api()

@@ -104,7 +104,8 @@ def evaluar(gateway, estrategia: str, casos: list[Caso] = CASOS) -> Puntaje:
                     sistema=lector.SISTEMA,
                     documentos=[Documento(capture_id=caso.nombre, texto=lector.texto_con_paginas(texto, paginas))],
                     instruccion="Devuelve la ficha JSON con los hechos del documento.",
-                    esquema=lector.Ficha.model_json_schema(),
+                    esquema=lector.esquema_api(),
+                    max_tokens=lector.MAX_TOKENS_FICHA,
                 )
                 resp = gateway.completar(sol)
                 ficha = lector.Ficha.model_validate_json(resp.texto)
