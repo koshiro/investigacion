@@ -315,14 +315,20 @@ def paso_pedir_captura(investigation_id: str, url: str, rol: str = "investigador
 def paso_urls_candidatas(investigation_id: str, organismo: str) -> list[str]:
     """URLs a capturar: resultados de búsqueda en dominios oficiales del organismo o del Portal, en la lista blanca."""
     with _worker() as w:
-        org = w.execute("SELECT nombre, dominios FROM organization WHERE nombre = %s", (organismo,)).fetchone()
+        org = w.execute(
+            "SELECT nombre, dominios, url_transparencia FROM organization WHERE nombre = %s", (organismo,)
+        ).fetchone()
         if org is None:
             raise ValueError(f"organismo desconocido: {organismo}")
         ctx = _ctx(w, investigation_id)
-        urls: list[str] = []
-        consultas = [f"{org[0]} solicitud de acceso a la información transparencia ley 20.285 correo"]
-        consultas += [f"site:{d} transparencia solicitud de información" for d in org[1]]
-        consultas.append(f"site:{descubrimiento.PORTAL} {org[0]}")
+        # La URL de transparencia conocida va primero; la búsqueda completa. Sin `site:`: duckduckgo falla con él
+        # (medido el 2026-10-29); el filtro por dominio oficial lo hace el código.
+        urls: list[str] = [org[2]] if org[2] and herramientas.dominio_permitido(w, org[2]) else []
+        consultas = [
+            f"{org[0]} solicitud de acceso a la información transparencia",
+            f"{org[0]} transparencia pasiva correo",
+            f"{org[0]} portal transparencia",
+        ]
         for c in consultas:
             try:
                 resultados = herramientas.ejecutar(ctx, "investigador", "search_web", {"consulta": c[:200]})

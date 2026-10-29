@@ -65,10 +65,10 @@ def test_argumentos_extra_o_invalidos_se_rechazan(pg):
 def test_request_capture_solo_en_dominios_de_la_lista_blanca(pg):
     ctx = _ctx(pg)
     jid = herramientas.ejecutar(
-        ctx, "investigador", "request_capture", {"url": "https://www.villarrica.cl/transparencia"}
+        ctx, "investigador", "request_capture", {"url": "https://www.munivillarrica.cl/transparencia"}
     )
     assert pg.su.execute("SELECT url, created_by FROM capture_job WHERE id = %s", (jid,)).fetchone() == (
-        "https://www.villarrica.cl/transparencia",
+        "https://www.munivillarrica.cl/transparencia",
         "agent:investigador",
     )
     for url in ("https://evil.example/x", "https://www.villarrica.cl.evil.example/", "http://169.254.169.254/latest"):
