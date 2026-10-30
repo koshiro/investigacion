@@ -651,6 +651,8 @@ def despertador(worker_url: str, intervalo_s: float, parar: threading.Event) -> 
             with psycopg.connect(worker_url, autocommit=True) as c:
                 iniciar_pedidos(c)
                 despertar(c)
+                # Sin modelo: los borradores toman el canal confirmado y los datos del solicitante en cuanto existen.
+                agentes.actualizar_borradores(c, _env().solicitante)
         except Exception as e:
             log.warning("despertador", error=str(e))
         parar.wait(intervalo_s)

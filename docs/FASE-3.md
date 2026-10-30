@@ -83,6 +83,17 @@ todo lo enviado.
 
 No se evadieron las barreras: ni User-Agent falso, ni TLS sin verificar, ni salida fuera del proxy.
 
+## Decisiones de Daniel (2026-10-30)
+
+- **Solicitante**: Daniel Riquelme, correo `investigacion@danielriquelme.cl` (Secret `solicitante` en homelab-config;
+  lo agrega el código, nunca va a la API).
+- **Envío**: las primeras solicitudes salen **desde el correo de Daniel, a mano**: aprueba el borrador, la web muestra
+  destinatario, asunto y cuerpo exactos, y «Registrar envío manual» consume la aprobación y fija `enviada_at`
+  (migración 0011). Un borrador sin canal confirmado o sin datos del solicitante no se puede aprobar.
+- El worker actualiza los borradores sin modelo (versión nueva) en cuanto hay canal confirmado o solicitante.
+- **Fase 3**: el dispatcher envía desde `investigacion@danielriquelme.cl` (no una cuenta Gmail nueva). Hay que
+  resolver por dónde sale el correo (proveedor del dominio, SMTP por el proxy o API) y cómo se lee la respuesta.
+
 ## Decisiones abiertas (para Daniel)
 
 - **Buscador**: ¿API de pago con clave (p. ej. Brave Search API) por el proxy, o descubrimiento solo por URLs

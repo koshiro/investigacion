@@ -333,6 +333,48 @@ def bloque_solicitante(solicitante: dict[str, str]) -> str:
     return f"{nombre}\nCorreo para notificaciones: {correo}"
 
 
+def actualizar_borradores(worker: psycopg.Connection, solicitante: dict[str, str]) -> list[str]:
+    """Sin modelo: versión nueva de cada borrador vigente (sin decisión de Daniel) cuando ya hay datos del solicitante o
+    un canal confirmado que el borrador no tiene. Copia asunto, cuerpo y afirmaciones; solo cambia el bloque del
+    solicitante y el destinatario. Devuelve los ids nuevos."""
+    marcador = bloque_solicitante({})
+    real = bloque_solicitante(solicitante) if solicitante.get("nombre") and solicitante.get("correo") else None
+    filas = worker.execute(
+        "SELECT r.id, r.investigation_id, r.organization_id, r.contact_id, r.asunto, r.cuerpo, "
+        "(SELECT k.id FROM organization_contact k WHERE k.organization_id = r.organization_id "
+        " AND k.estado = 'confirmado' ORDER BY k.confirmed_at DESC LIMIT 1) "
+        "FROM request r WHERE r.estado IN ('borrador', 'en_revision') "
+        "AND NOT EXISTS (SELECT 1 FROM request n WHERE n.anterior_id = r.id) "
+        "AND NOT EXISTS (SELECT 1 FROM approval a WHERE a.objeto_tipo = 'request' AND a.objeto_id = r.id)"
+    ).fetchall()
+    nuevos = []
+    for rid, inv, org, contacto, asunto, cuerpo, confirmado in filas:
+        cuerpo_nuevo = cuerpo.replace(marcador, real) if real and marcador in cuerpo else cuerpo
+        contacto_nuevo = confirmado or contacto
+        if cuerpo_nuevo == cuerpo and contacto_nuevo == contacto:
+            continue
+        with worker.transaction():
+            nid = worker.execute(
+                "INSERT INTO request (created_by, investigation_id, organization_id, contact_id, anterior_id, asunto, "
+                "cuerpo) VALUES ('agent:redactor', %s, %s, %s, %s, %s, %s) RETURNING id",
+                (inv, org, contacto_nuevo, rid, asunto, cuerpo_nuevo),
+            ).fetchone()[0]  # type: ignore[index]
+            worker.execute(
+                "INSERT INTO request_claim (created_by, request_id, finding_id, texto) "
+                "SELECT 'agent:redactor', %s, finding_id, texto FROM request_claim WHERE request_id = %s",
+                (nid, rid),
+            )
+            auditoria.registrar(
+                worker,
+                "agent:redactor",
+                "borrador.actualizar",
+                f"request/{nid}",
+                {"anterior": str(rid), "solicitante": cuerpo_nuevo != cuerpo, "canal": contacto_nuevo != contacto},
+            )
+        nuevos.append(str(nid))
+    return nuevos
+
+
 def guardar_borrador(
     worker: psycopg.Connection, investigation_id: str, borrador: Borrador, aux: dict, solicitante: dict[str, str]
 ) -> str:
