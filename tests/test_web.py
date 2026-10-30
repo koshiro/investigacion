@@ -53,7 +53,7 @@ def test_login_correcto_crea_sesion_de_12_horas_con_cookie_segura_de_navegador(s
 @pytest.mark.parametrize("variante", CAMPOS)
 def test_credenciales_incorrectas_no_entran(sitio, variante):
     datos = _formulario(NOMBRE, PASSWORD, _codigo(sitio))
-    datos[variante] = "999999" if variante == "codigo" else OTRA
+    datos[variante] = "999999" if variante == "totp" else OTRA
     r = sitio.c.post("/login", data=datos)
     assert r.status_code == 401 and sitio.c.get("/").status_code == 303
 
@@ -222,3 +222,11 @@ def test_crear_usuario_sin_totp_configurado_falla(sitio):
 
     with pytest.raises(SystemExit):
         cli.crear_usuario(Settings(database_url=sitio.pg.url), NOMBRE)
+
+
+def test_el_campo_totp_lo_reconocen_los_gestores_de_contrasenas(sitio):
+    # 1Password, Bitwarden y Apple Passwords proponen el código si el campo es one-time-code y se llama totp,
+    # y lo asocian a la cuenta por el campo de usuario del mismo formulario.
+    html = sitio.c.get("/login").text
+    assert 'id="totp" name="totp"' in html and 'autocomplete="one-time-code"' in html
+    assert 'autocomplete="username"' in html and 'autocomplete="current-password"' in html

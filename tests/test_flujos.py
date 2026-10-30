@@ -151,6 +151,9 @@ def _simular_capturas(pg, parar: threading.Event, texto_de):
             "SELECT id, investigation_id, url FROM capture_job WHERE estado = 'pendiente'"
         ).fetchall():
             t = texto_de(url)
+            enlaces = []
+            if isinstance(t, tuple):
+                t, enlaces = t
             if t is None:
                 pg.su.execute(
                     "UPDATE capture_job SET estado = 'error', error = 'HTTP 403 al descargar' WHERE id = %s", (jid,)
@@ -164,9 +167,9 @@ def _simular_capturas(pg, parar: threading.Event, texto_de):
                 (inv, url, sha, f"evidencia/{sha[:2]}/{sha}"),
             ).fetchone()[0]
             ext = pg.su.execute(
-                "INSERT INTO extraction (created_by, capture_id, extractor, texto, paginas) "
-                "VALUES ('service:extract', %s, 'html-1', %s, %s) RETURNING id",
-                (cap, t, Jsonb([{"n": 1, "inicio": 0, "fin": len(t)}])),
+                "INSERT INTO extraction (created_by, capture_id, extractor, texto, paginas, enlaces) "
+                "VALUES ('service:extract', %s, 'html-1', %s, %s, %s) RETURNING id",
+                (cap, t, Jsonb([{"n": 1, "inicio": 0, "fin": len(t)}]), Jsonb(enlaces)),
             ).fetchone()[0]
             pg.su.execute(
                 "INSERT INTO pii_scan (created_by, extraction_id, version, nivel, texto_redactado) "
@@ -177,25 +180,40 @@ def _simular_capturas(pg, parar: threading.Event, texto_de):
         parar.wait(0.1)
 
 
-def test_descubrimiento_propone_el_canal_con_su_captura_y_cita(worker):
+def test_descubrimiento_sigue_enlaces_oficiales_y_propone_el_canal_con_su_captura_y_cita(worker):
+    """Caso real del 2026-10-29: la portada municipal enlaza «Canales de Recepción de Solicitudes»."""
     pg = worker.pg
     inv = str(_villarrica(pg.su))
-    pagina = "Solicitudes de acceso a la información (Ley 20.285): transparencia@munivillarrica.cl"
+    canales = "https://www.munivillarrica.cl/?page_id=1751"
+
+    def paginas(url):
+        if url == "https://www.munivillarrica.cl/":
+            return "Inicio\nCanales de Recepción de Solicitudes", [
+                {
+                    "href": "/?page_id=1751",
+                    "texto": "Canales de Recepción de Solicitudes",
+                },  # relativo, como en el sitio
+                {"href": "https://otro.example/x", "texto": "Solicitud de acceso"},
+            ]
+        if url == canales:
+            return "Solicitudes de acceso a la información (Ley 20.285): transparencia@munivillarrica.cl"
+        if "portaltransparencia" in url:
+            return None  # el Portal responde 403
+        return "Página sin correos"
+
     parar = threading.Event()
-    hilo = threading.Thread(target=_simular_capturas, args=(pg, parar, lambda url: pagina), daemon=True)
+    hilo = threading.Thread(target=_simular_capturas, args=(pg, parar, paginas), daemon=True)
     hilo.start()
     try:
-        salida = _resultado(DBOS.start_workflow(flujos.flujo_descubrir, inv, "Municipalidad de Villarrica").workflow_id)
+        wf = DBOS.start_workflow(flujos.flujo_descubrir, inv, "Municipalidad de Villarrica").workflow_id
+        salida = _resultado(wf)
     finally:
         parar.set()
-    assert salida["urls"] == [  # primero la ficha conocida del Portal, luego lo encontrado en dominios oficiales
-        "https://www.portaltransparencia.cl/PortalPdT/pdtta/-/ta/MU339",
-        "https://www.munivillarrica.cl/transparencia",
-    ]
+    assert canales in salida["urls"] and "https://otro.example/x" not in salida["urls"]
     k = pg.su.execute("SELECT correo, tipo, estado, cita, capture_id FROM organization_contact").fetchall()
     assert [(c, t, e) for c, t, e, _, _ in k] == [("transparencia@munivillarrica.cl", "transparencia", "candidato")]
-    assert k[0][3] in pagina and k[0][4] is not None
-    # Queda pendiente de Daniel en la bandeja.
+    url_cap = pg.su.execute("SELECT url_final FROM capture WHERE id = %s", (k[0][4],)).fetchone()[0]
+    assert url_cap == canales  # la evidencia es la página enlazada, no la portada
     assert any(t == "organization_contact" for t, _, _ in aprobaciones.pendientes(pg.conectar("inv_web")))
 
 

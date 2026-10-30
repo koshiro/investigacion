@@ -35,7 +35,7 @@ MAX_ESPERA_CAPTURAS = 90  # ~30 minutos
 # Versión fija de los flujos: por defecto DBOS usa un hash del código y un despliegue dejaría huérfano un plan que
 # espera la aprobación de Daniel (días). Subirla SOLO si cambia el orden o el nombre de los pasos de un flujo: los
 # flujos en curso con la versión anterior quedan sin retomar (se vuelve a pedir el plan).
-VERSION_FLUJOS = "fase2-1"
+VERSION_FLUJOS = "fase2-2"
 
 
 @dataclass
@@ -324,6 +324,12 @@ def paso_urls_candidatas(investigation_id: str, organismo: str) -> list[str]:
         # La URL de transparencia conocida va primero; la búsqueda completa. Sin `site:`: duckduckgo falla con él
         # (medido el 2026-10-29); el filtro por dominio oficial lo hace el código.
         urls: list[str] = [org[2]] if org[2] and herramientas.dominio_permitido(w, org[2]) else []
+        # Portadas de los dominios oficiales que están en la lista blanca: de ahí se siguen sus enlaces.
+        for (dominio,) in w.execute(
+            "SELECT dominio FROM source_domain WHERE en_lista AND cliente = 'capture' ORDER BY dominio"
+        ).fetchall():
+            if descubrimiento._en(dominio, org[1]) and f"https://{dominio}/" not in urls:
+                urls.append(f"https://{dominio}/")
         consultas = [
             f"{org[0]} solicitud de acceso a la información transparencia",
             f"{org[0]} transparencia pasiva correo",
@@ -343,6 +349,27 @@ def paso_urls_candidatas(investigation_id: str, organismo: str) -> list[str]:
 
 
 @DBOS.step()
+def paso_enlaces(organismo: str, capturas: list[list[str]], ya: list[str]) -> list[str]:
+    """Siguiente nivel: enlaces de transparencia de las páginas oficiales ya capturadas (filtrados en código)."""
+    with _worker() as w:
+        dominios = w.execute("SELECT dominios FROM organization WHERE nombre = %s", (organismo,)).fetchone()[0]  # type: ignore[index]
+        vistos = set(ya)
+        salida: list[str] = []
+        for _, capture_id in capturas:
+            fila = w.execute(
+                "SELECT e.enlaces, c.url_final FROM extraction e JOIN capture c ON c.id = e.capture_id "
+                "WHERE e.capture_id = %s ORDER BY e.created_at DESC LIMIT 1",
+                (capture_id,),
+            ).fetchone()
+            enlaces = descubrimiento.absolutos(fila[0], fila[1]) if fila else []
+            for u in descubrimiento.enlaces_a_seguir(enlaces, dominios, vistos):
+                if herramientas.dominio_permitido(w, u) and u not in salida:
+                    salida.append(u)
+                    vistos.add(u)
+        return salida[: descubrimiento.MAX_SEGUIR]
+
+
+@DBOS.step()
 def paso_candidatos(organismo: str, capturas: list[list[str]]) -> list[dict]:
     """Extrae y valida candidatos (código) e inserta los nuevos en organization_contact."""
     e = _env()
@@ -352,12 +379,16 @@ def paso_candidatos(organismo: str, capturas: list[list[str]]) -> list[dict]:
         ).fetchone()  # type: ignore[misc]
         salida = []
         for _, capture_id in capturas:
-            url, texto = w.execute(
-                "SELECT c.url_final, e.texto FROM capture c JOIN extraction e ON e.capture_id = c.id "
+            url, texto, enlaces = w.execute(
+                "SELECT c.url_final, e.texto, e.enlaces FROM capture c JOIN extraction e ON e.capture_id = c.id "
                 "WHERE c.id = %s ORDER BY e.created_at DESC LIMIT 1",
                 (capture_id,),
             ).fetchone()  # type: ignore[misc]
-            for cand in descubrimiento.candidatos_de_texto(texto, url, dominios, e.tiene_mx, nombre):
+            propios = descubrimiento.candidatos_de_texto(texto, url, dominios, e.tiene_mx, nombre)
+            de_enlaces = descubrimiento.candidatos_de_enlaces(
+                texto, descubrimiento.absolutos(enlaces, url), url, dominios
+            )
+            for cand in propios + de_enlaces:
                 existe = w.execute(
                     "SELECT 1 FROM organization_contact WHERE organization_id = %s "
                     "AND coalesce(correo, url_portal) = %s "
@@ -396,10 +427,20 @@ def paso_candidatos(organismo: str, capturas: list[list[str]]) -> list[dict]:
 @DBOS.workflow()
 def flujo_descubrir(investigation_id: str, organismo: str) -> dict:
     urls = paso_urls_candidatas(investigation_id, organismo)
-    jobs = [j for j in (paso_pedir_captura(investigation_id, u) for u in urls) if j]
-    estado = esperar_capturas(jobs) if jobs else {"listas": [], "errores": [], "pendientes": 0}
-    candidatos = paso_candidatos(organismo, estado["listas"])
-    return {"urls": urls, "capturas": len(estado["listas"]), "errores": estado["errores"], "candidatos": candidatos}
+    listas: list[list[str]] = []
+    errores: list = []
+    nivel = urls
+    for _ in range(3):  # semillas y dos niveles de enlaces oficiales
+        jobs = [j for j in (paso_pedir_captura(investigation_id, u) for u in nivel) if j]
+        estado = esperar_capturas(jobs) if jobs else {"listas": [], "errores": [], "pendientes": 0}
+        listas += estado["listas"]
+        errores += estado["errores"]
+        nivel = paso_enlaces(organismo, estado["listas"], urls)
+        urls += nivel
+        if not nivel:
+            break
+    candidatos = paso_candidatos(organismo, listas)
+    return {"urls": urls, "capturas": len(listas), "errores": errores, "candidatos": candidatos}
 
 
 # --- inventario de la lista blanca ------------------------------------------------------------------------------------

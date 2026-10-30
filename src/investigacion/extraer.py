@@ -10,7 +10,7 @@ import functools
 import io
 import os
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from html.parser import HTMLParser
 
 VERSION_EXTRACTOR = "extractor-1"
@@ -32,6 +32,7 @@ class Extraido:
     extractor: str
     idioma: str = "es"
     tabular: bool = False  # filas de datos (CSV): sin modelo de nombres, ver extract.procesar_capturas
+    enlaces: list[dict] = field(default_factory=list)  # HTML: [{href, texto}] crudos (contenido externo)
 
 
 class NoSoportado(Exception):
@@ -87,14 +88,23 @@ class _HtmlATexto(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.partes: list[str] = []
         self._omitir = 0
+        self.enlaces: list[tuple[str, list[str]]] = []  # (href, partes del texto del ancla)
+        self._ancla: list[str] | None = None
 
     def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            href = dict(attrs).get("href")
+            if href and len(self.enlaces) < MAX_ENLACES:
+                self._ancla = []
+                self.enlaces.append((href.strip(), self._ancla))
         if tag in self._OMITIR:
             self._omitir += 1
         elif tag in self._BLOQUES:
             self.partes.append("\n")
 
     def handle_endtag(self, tag):
+        if tag == "a":
+            self._ancla = None
         if tag in self._OMITIR:
             self._omitir = max(0, self._omitir - 1)
         elif tag in self._BLOQUES:
@@ -105,13 +115,31 @@ class _HtmlATexto(HTMLParser):
     def handle_data(self, data):
         if not self._omitir:
             self.partes.append(data)
+            if self._ancla is not None:
+                self._ancla.append(data)
 
 
-def extraer_html(datos: bytes) -> Extraido:
+MAX_ENLACES = 500
+
+
+def extraer_html(datos: bytes, url: str = "") -> Extraido:
+    """Texto y enlaces. Los `href` se guardan CRUDOS: este servicio no carga ni siquiera urllib (sin red, ver pruebas);
+    el worker los resuelve contra la URL de la captura (`descubrimiento.absolutos`)."""
     p = _HtmlATexto()
     p.feed(decodificar(datos))
     lineas = [" ".join(linea.split()) for linea in "".join(p.partes).splitlines()]
-    return extraer_texto("\n".join(linea for linea in lineas if linea).encode())
+    e = extraer_texto("\n".join(linea for linea in lineas if linea).encode())
+    enlaces, vistos = [], set()
+    for href, partes in p.enlaces:
+        if (
+            href.lower().startswith(("javascript:", "mailto:", "tel:", "data:", "#"))
+            or href in vistos
+            or len(href) > 2000
+        ):
+            continue
+        vistos.add(href)
+        enlaces.append({"href": href, "texto": " ".join("".join(partes).split())[:200]})
+    return Extraido(e.texto, e.paginas, e.extractor, e.idioma, e.tabular, enlaces)
 
 
 MIN_CARACTERES_PAGINA = 80  # una página con menos texto que esto se considera sin capa de texto → OCR
@@ -238,7 +266,7 @@ def extraer(mime: str, datos: bytes, url: str = "") -> Extraido:
     if mime in ("text/csv", "application/csv", "application/vnd.ms-excel") or mime.endswith("csv"):
         return extraer_csv(datos)
     if mime in ("text/html", "application/xhtml+xml"):
-        return extraer_html(datos)
+        return extraer_html(datos, url)
     if mime.startswith("text/") or mime in ("application/json",):
         return extraer_texto(datos)
     raise NoSoportado(f"formato sin extractor: {mime}")

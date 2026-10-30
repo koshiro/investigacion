@@ -81,3 +81,64 @@ def test_lectura_de_respuestas_mx():
     assert not d.hay_mx_en_respuesta(_respuesta(7, [5]), 7)  # solo CNAME
     assert not d.hay_mx_en_respuesta(_respuesta(8, [15]), 7)  # otro id
     assert not d.hay_mx_en_respuesta(_respuesta(7, [15])[:20], 7)  # truncada
+
+
+# --- enlaces (casos tomados de las portadas reales del 2026-10-29) ---------------------------------------------------
+
+ENLACES_MUNI = [
+    {"url": "https://www.munivillarrica.cl/?page_id=1751", "texto": "Canales de Recepción de Solicitudes"},
+    {"url": "https://www.munivillarrica.cl/formulario-oirs/", "texto": ""},
+    {"url": "https://www.munivillarrica.cl/turismo/", "texto": "Turismo"},
+    {"url": "https://villarrica-transparencia.com/solicitud", "texto": "Solicitud de acceso"},
+    {
+        "url": "https://www.portaltransparencia.cl/PortalPdT/ingreso-sai-v2?idOrg=undefined",
+        "texto": "Solicitar información online",
+    },
+]
+ENLACES_VIALIDAD = [
+    {
+        "url": "https://www.portaltransparencia.cl/PortalPdT/ingreso-sai-v2?idOrg=1043",
+        "texto": "Solicitud de Acceso a la Información",
+    },
+    {"url": "https://www.portaltransparencia.cl/PortalPdT/pdtta?codOrganismo=AM010", "texto": "Transparencia Activa"},
+]
+
+
+def test_sigue_solo_enlaces_oficiales_de_transparencia_con_prioridad():
+    urls = d.enlaces_a_seguir(ENLACES_MUNI, ["munivillarrica.cl"], set())
+    assert urls == ["https://www.munivillarrica.cl/?page_id=1751", "https://www.munivillarrica.cl/formulario-oirs/"]
+    assert d.enlaces_a_seguir(ENLACES_MUNI, ["munivillarrica.cl"], set(urls)) == []
+
+
+def test_el_formulario_del_portal_enlazado_desde_la_pagina_oficial_es_canal_portal():
+    texto = "Transparencia\nSolicitud de Acceso a la Información\nTransparencia Activa"
+    c = d.candidatos_de_enlaces(
+        texto, ENLACES_VIALIDAD, "https://vialidad.mop.gob.cl/", ["vialidad.mop.gob.cl", "mop.gob.cl"]
+    )
+    assert [(x.canal, x.url_portal, x.cita, x.estado) for x in c] == [
+        ("portal", ENLACES_VIALIDAD[0]["url"], "Solicitud de Acceso a la Información", "candidato")
+    ]
+
+
+def test_portal_sin_id_de_organismo_queda_en_revisar_y_pagina_ajena_no_cuenta():
+    texto = "Solicitar información online"
+    c = d.candidatos_de_enlaces(texto, ENLACES_MUNI, "https://www.munivillarrica.cl/", ["munivillarrica.cl"])
+    assert [x.estado for x in c] == ["revisar"]
+    assert d.candidatos_de_enlaces(texto, ENLACES_MUNI, "https://villarrica.cl/", ["munivillarrica.cl"]) == []
+    assert (
+        d.candidatos_de_enlaces("otro texto", ENLACES_MUNI, "https://www.munivillarrica.cl/", ["munivillarrica.cl"])
+        == []
+    )
+
+
+def test_extraer_html_guarda_enlaces_absolutos_con_su_ancla():
+    from investigacion import extraer
+
+    html = (
+        b'<a href="/t#x">Transparencia <b>Activa</b></a><a href="javascript:void(0)">x</a><a href="mailto:a@b.cl">m</a>'
+    )
+    e = extraer.extraer_html(html, "https://www.munivillarrica.cl/inicio/")
+    assert e.enlaces == [{"href": "/t#x", "texto": "Transparencia Activa"}]  # crudo: extract no resuelve URLs
+    assert d.absolutos(e.enlaces, "https://www.munivillarrica.cl/inicio/") == [
+        {"url": "https://www.munivillarrica.cl/t", "texto": "Transparencia Activa"}
+    ]
