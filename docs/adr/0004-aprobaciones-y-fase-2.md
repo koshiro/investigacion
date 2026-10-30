@@ -39,6 +39,5 @@ en sus argumentos no debe poder saltársela.
 
 - Versión fija de los flujos (`flujos.VERSION_FLUJOS`): un despliegue retoma los planes que esperan aprobación. Si
   cambia la secuencia de pasos de un flujo hay que subirla, y los planes en espera se vuelven a pedir.
-
 - Feriados: la tabla existe, pero la carga anual la revisa Daniel en la fase 3.
 - El esquema `dbos` del prototipo de la fase 0 queda sin uso; se puede borrar a mano.
