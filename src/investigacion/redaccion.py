@@ -17,7 +17,7 @@ import unicodedata
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 
-VERSION = "redaccion-2"
+VERSION = "redaccion-3"
 LIMITE_PERSONA_JURIDICA = 50_000_000
 # Los RUN de personas naturales llegan hoy a ~28 millones; cuerpos de 30 a 50 millones con dígito válido son casi
 # siempre
@@ -103,8 +103,10 @@ def detectar_run(texto: str) -> list[Hallazgo]:
 # --- correo y teléfono -------------------------------------------------------------------------------------------
 
 _CORREO = re.compile(r"[\w.+-]+@([\w-]+(?:\.[\w-]+)+)")
-_CELULAR = re.compile(r"(?<![\d.,])(?:\+?56[\s-]?)?9[\s-]?\d{4}[\s-]?\d{4}(?![\d]|[.,]\d)")
-_FIJO_CON_PREFIJO = re.compile(r"(?<![\d.,])\+56[\s-]?[2-8]\d?[\s-]?\d{3,4}[\s-]?\d{4}(?![\d]|[.,]\d)")
+# Un teléfono no va pegado a letras ni a guiones: «9d6c69d9-8914-4559-…» (un UUID) daba «9 8914 4559» en el 0,7 % de
+# los UUID y el gateway bloqueaba la llamada por «dato personal residual» (medido el 2026-10-30; redaccion-3).
+_CELULAR = re.compile(r"(?<![\w.,-])(?:\+?56[\s-]?)?9[\s-]?\d{4}[\s-]?\d{4}(?![\w-]|[.,]\d)")
+_FIJO_CON_PREFIJO = re.compile(r"(?<![\w.,-])\+56[\s-]?[2-8]\d?[\s-]?\d{3,4}[\s-]?\d{4}(?![\w-]|[.,]\d)")
 _FIJO_CON_CONTEXTO = re.compile(
     r"(?i:fono|tel[eé]fono|tel\.|celular|fax|contacto)\W{0,12}((?:\(?\d{2}\)?[\s-]?)?\d{3,4}[\s-]?\d{4})(?![\d]|[.,]\d)"
 )

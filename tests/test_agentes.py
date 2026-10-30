@@ -69,7 +69,7 @@ def test_el_borrador_no_envia_datos_del_solicitante_y_exige_afirmaciones_literal
     borrador = {
         "asunto": "Solicitud de inventario de caminos",
         "cuerpo": cuerpo,
-        "afirmaciones": [{"texto": "El presupuesto vial 2024 fue de $ 1.200 millones", "finding_id": fid}],
+        "afirmaciones": [{"texto": "El presupuesto vial 2024 fue de $ 1.200 millones", "finding_id": "h1"}],
     }
     gw, fake = _gw(pg, _json(borrador))
     w = pg.conectar("inv_worker")
@@ -83,8 +83,8 @@ def test_el_borrador_no_envia_datos_del_solicitante_y_exige_afirmaciones_literal
 
     # Una afirmación que no está literal en el cuerpo, o que apunta a un hallazgo no verificado, se rechaza.
     for mala in (
-        {"texto": "Gastaron el doble", "finding_id": fid},
-        {"texto": "Contexto", "finding_id": "00000000-0000-0000-0000-000000000000"},
+        {"texto": "Gastaron el doble", "finding_id": "h1"},
+        {"texto": "Contexto", "finding_id": "h9"},
     ):
         b = agentes.Borrador.model_validate(borrador | {"afirmaciones": [mala]})
         with pytest.raises(agentes.AgenteError):
@@ -117,7 +117,7 @@ def test_hallazgos_solo_con_citas_verificadas_existentes(pg):
     ).fetchone()[0]
     salida = {
         "hallazgos": [
-            {"enunciado": "Se aprobaron 3 proyectos", "tipo": "hecho", "citas": [cid]},
+            {"enunciado": "Se aprobaron 3 proyectos", "tipo": "hecho", "citas": ["c1"]},
             {"enunciado": "Se aprobaron 30 proyectos", "tipo": "hecho", "citas": ["inventada"]},
         ]
     }
@@ -130,5 +130,6 @@ def test_hallazgos_solo_con_citas_verificadas_existentes(pg):
         "SELECT f.estado, c.texto_citado, c.verified FROM finding f JOIN citation c ON c.finding_id = f.id"
     ).fetchall()
     assert fila == [("borrador", "Se aprobaron 3 proyectos", False)]  # la cita del hallazgo se verifica de nuevo
-    assert "Se aprobaron 3 proyectos" in fake.messages.recibido[0]["messages"][0]["content"][0]["text"]
+    enviado = fake.messages.recibido[0]["messages"][0]["content"][0]["text"]
+    assert "[c1]" in enviado and "Se aprobaron 3 proyectos" in enviado and cid not in enviado  # sin UUID en el prompt
     assert pg.su.execute("SELECT count(*) FROM audit_log WHERE accion = 'hallazgo.descartado'").fetchone()[0] == 1
