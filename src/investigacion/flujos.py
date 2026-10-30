@@ -586,8 +586,8 @@ def paso_verificar_hallazgos(investigation_id: str) -> tuple[dict, float]:
             else:
                 listos.append((fid, enunciado, [t for _, t in citas], "revisar" in estados))
         if listos:
-            revision, costo = agentes.revisar_hallazgos(_env().gateway, [(f, e, cs) for f, e, cs, _ in listos])
-            por_id = {r.finding_id: r for r in revision.revisiones}
+            pregunta = w.execute("SELECT pregunta FROM investigation WHERE id = %s", (investigation_id,)).fetchone()[0]  # type: ignore[index]
+            por_id, costo = agentes.revisar_hallazgos(_env().gateway, [(f, e, cs) for f, e, cs, _ in listos], pregunta)
             for fid, _, _, hay_revisar in listos:
                 r = por_id.get(fid)
                 if r is None or not r.respaldado:

@@ -15,11 +15,36 @@ plan, aprobarlo y confirmar los canales en la bandeja. Ningún agente corre sin 
 | Descubrimiento de canales | código y pruebas; en vivo bloqueado en 3 de 4 organismos (ver hallazgos) | `descubrimiento.py`, `flujo_descubrir` |
 | Inventario de la lista blanca | código y pruebas; corre como tarea del plan | `flujo_inventario` |
 
-Imagen en producción: `sha-54e98a3`. 260 pruebas en CI (Postgres real; los flujos con DBOS real y un login que solo
+Imagen en producción: ver `cluster/apps/investigacion/web.yml` en homelab-config. 268 pruebas en CI (Postgres real; los flujos con DBOS real y un login que solo
 tiene `inv_worker`).
+
+## Primera corrida real del plan (2026-10-29/30)
+
+Plan de 30 tareas aprobado por Daniel: 29 hechas, 1 fallida. Costo total de la API: USD 0,43; `residuos_pii` = 0 en
+todo lo enviado.
+
+- **Inventario**: los 18 dominios de `capture` marcados con evidencia: 16 verificados (`www.villarrica.cl` resultó ser
+  un **dominio en venta**), `www.portaltransparencia.cl` no accesible (403) y `www.gorearaucania.cl` no accesible (TLS).
+- **Descubrimiento**: 0 canales (la búsqueda web no devolvió páginas oficiales y el Portal da 403). Corregido en #33:
+  ahora sigue en código los enlaces de las páginas oficiales. Medido con las portadas reales: Vialidad → formulario del
+  Portal `idOrg=1043` (candidato); Municipalidad → formulario sin id (revisar) + «Canales de Recepción de Solicitudes»
+  y OIRS a seguir; SERVIU solo enlaza por goo.gl; GORE bloqueado por TLS.
+- **Lector**: 19 fichas; una captura bloqueada por el gateway cortó la tarea entera. Causa real: el detector de
+  teléfonos veía números dentro de UUID (0,7 % de los UUID; el `capture_id` va en la etiqueta del documento).
+  Corregido en `redaccion-3` y los prompts usan etiquetas cortas (`c1`, `h1`).
+- **Hallazgos**: 13 verificados, 2 rechazados, pero **poco pertinentes** (proyecto habitacional de Temuco, API de
+  Mercado Público): las capturas eran portadas genéricas. Ahora el investigador solo propone hechos sobre caminos de
+  la comuna y el verificador rechaza lo no pertinente. Falta capturar documentos de fondo (BIP filtrado por comuna,
+  presupuestos, licitaciones): es el trabajo de la fase 4 y de un próximo plan.
+- **Borradores**: 4 bien formados (piden información concreta y reutilizable), sin afirmaciones de contexto y sin
+  canal confirmado (se rehacen al confirmar los canales).
+- **Duplicados**: tres clics en «Proponer plan» encolaron tres planes; ahora hay un plan a la vez por investigación.
 
 ## Qué debe hacer Daniel (en orden)
 
+0. TOTP autocompletado: los campos se llaman `totp` con `autocomplete="one-time-code"` y el usuario va en el mismo
+   formulario. Hay que guardar el código TOTP en el gestor de contraseñas (1Password, Bitwarden o Apple Passwords:
+   «agregar código de verificación» en la entrada de la web, con la URI `otpauth://` que imprime `crear-usuario`).
 1. Entrar en la web → «Caminos de Villarrica» → **Proponer plan**. A los ~30 s aparece en **Aprobaciones**. Revisar
    el contenido exacto (y `problemas_de_permisos`) y aprobar con un código TOTP nuevo.
 2. Seguir la ejecución en la misma página (tareas, estado, costo). Al terminar, aprobar en la bandeja los canales de

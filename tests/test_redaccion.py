@@ -138,3 +138,17 @@ def test_mapa_y_traduccion_de_posiciones():
 def test_residuos_detecta_lo_que_queda_y_no_los_marcadores():
     assert r.residuos("ya redactado: [RUN_1] y [CORREO_2]") == []
     assert r.residuos("se coló 12.345.678-5") != []
+
+
+def test_un_uuid_no_parece_un_telefono_ni_un_run():
+    """Visto en vivo (2026-10-30): «9d6c69d9-8914-4559-…» daba un teléfono y el gateway bloqueaba la llamada."""
+    import uuid
+
+    from investigacion import redaccion
+
+    assert redaccion.residuos("[cita 9d6c69d9-8914-4559-a859-ed06a350a603]") == []
+    falsos = [u for u in (str(uuid.uuid4()) for _ in range(5000)) if redaccion.residuos(f"captura {u}, p. 3")]
+    assert falsos == []
+    # Los teléfonos reales se siguen detectando.
+    assert [h.tipo for h in redaccion.residuos("Celular: 9 8914 4559")] == ["TELEFONO"]
+    assert [h.tipo for h in redaccion.residuos("llame al +56 9 8914 4559.")] == ["TELEFONO"]

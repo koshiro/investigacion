@@ -152,7 +152,7 @@ def pasos_validos(plan: PlanPropuesto) -> list[str]:
 class HallazgoPropuesto(_M):
     enunciado: str = Field(min_length=1, max_length=600)
     tipo: Literal["hecho", "inferencia", "hipotesis"]
-    citas: list[str] = Field(min_length=1, max_length=8, description="ids de citas verificadas de las fichas")
+    citas: list[str] = Field(min_length=1, max_length=8, description="etiquetas de cita de la lista (c1, c2…)")
     limitaciones: list[str] = Field(default_factory=list, max_length=5)
 
 
@@ -163,9 +163,12 @@ class Hallazgos(_M):
 
 SISTEMA_HALLAZGOS = (
     "Eres el investigador. Con los hechos de las fichas (ya verificados contra sus documentos), redacta hallazgos que "
-    "sostengan o debiliten la hipótesis indicada. Cada hallazgo cita uno o más ids de cita de la lista (no inventes "
-    "ids ni cifras) y dice si es hecho (lo dicen las citas), inferencia (se deduce de ellas) o hipótesis. Si los "
-    "hechos no alcanzan, devuelve pocos hallazgos o ninguno y explica qué falta en advertencias."
+    "sostengan o debiliten la hipótesis indicada. Solo cuentan hechos sobre caminos (vialidad, pavimentación, "
+    "conservación, inversión vial) de la comuna de la investigación o de los organismos que los financian o ejecutan "
+    "ahí: descarta lo de otras comunas o temas (vivienda, noticias institucionales). Cada hallazgo cita una o más "
+    "etiquetas de la lista (c1, c2…; no inventes etiquetas ni cifras) y dice si es hecho (lo dicen las citas), "
+    "inferencia (se deduce de ellas) o hipótesis. Si los hechos no alcanzan, devuelve pocos hallazgos o ninguno y "
+    "explica qué falta en advertencias."
 )
 
 
@@ -184,12 +187,14 @@ def redactar_hallazgos(
         "ORDER BY c.created_at LIMIT 400",
         (investigation_id,),
     ).fetchall()
-    por_id = {c[0]: c for c in citas}
-    texto = "\n".join(f"[cita {c[0]}] (captura {c[1]}, p. {c[3] or '?'}) «{c[4]}»" for c in citas)
+    # Etiquetas cortas (c1, c2…) en vez de UUID: un UUID puede parecer un teléfono para el detector y bloquear la
+    # llamada (medido el 2026-10-30); además el modelo no necesita los ids internos. El código traduce de vuelta.
+    por_id = {f"c{i}": c for i, c in enumerate(citas, 1)}
+    texto = "\n".join(f"[{e}] (p. {c[3] or '?'}) «{c[4]}»" for e, c in por_id.items())
     sol = Solicitud(
         rol="investigador",
         sistema=SISTEMA_HALLAZGOS,
-        documentos=[Documento(capture_id=f"fichas:{investigation_id}", texto=texto or "(sin citas verificadas)")],
+        documentos=[Documento(capture_id="fichas", texto=texto or "(sin citas verificadas)")],
         instruccion=f"Hipótesis {codigo}: {hip[1]}. La sostiene: {hip[2]}. La descarta: {hip[3]}. "
         "Devuelve los hallazgos como JSON según el esquema.",
         esquema=_esquema(Hallazgos),
@@ -248,24 +253,33 @@ class Revisiones(_M):
 
 
 SISTEMA_VERIFICADOR = (
-    "Eres el verificador. Para cada hallazgo, decide si sus citas literales lo respaldan por completo (respaldado = "
-    "true) o si afirma más de lo que dicen (false), y explica en observaciones qué falta o qué se contradice. No "
-    "evalúes si las citas existen: eso ya se comprobó en código."
+    "Eres el verificador. Para cada hallazgo, decide si sus citas literales lo respaldan por completo Y si es "
+    "pertinente a la investigación indicada (caminos de esa comuna): respaldado = true solo si ambas cosas se "
+    "cumplen; false si afirma más de lo que dicen las citas o si trata de otro territorio o tema. Explica en "
+    "observaciones qué falta, qué se contradice o por qué no es pertinente. No evalúes si las citas existen: eso ya "
+    "se comprobó en código."
 )
 
 
-def revisar_hallazgos(gateway, filas: list[tuple[str, str, list[str]]]) -> tuple[Revisiones, float]:
-    """filas: (finding_id, enunciado, [citas literales])."""
-    texto = "\n\n".join(f"[hallazgo {f}] {e}\n" + "\n".join(f"  cita: «{c}»" for c in cs) for f, e, cs in filas)
+def revisar_hallazgos(
+    gateway, filas: list[tuple[str, str, list[str]]], pregunta: str = ""
+) -> tuple[dict[str, Revision], float]:
+    """filas: (finding_id, enunciado, [citas literales]). Devuelve {finding_id: revisión}; el modelo ve h1, h2…"""
+    etiquetas = {f"h{i}": f for i, (f, _, _) in enumerate(filas, 1)}
+    texto = "\n\n".join(
+        f"[h{i}] {e}\n" + "\n".join(f"  cita: «{c}»" for c in cs) for i, (_, e, cs) in enumerate(filas, 1)
+    )
     sol = Solicitud(
         rol="verificador",
         sistema=SISTEMA_VERIFICADOR,
         documentos=[Documento(capture_id="hallazgos", texto=texto)],
-        instruccion="Devuelve una revisión por hallazgo como JSON según el esquema.",
+        instruccion=f"Investigación: {pregunta}\nDevuelve una revisión por hallazgo (finding_id = h1, h2…) como JSON "
+        "según el esquema.",
         esquema=_esquema(Revisiones),
         max_tokens=6000,
     )
-    return completar(gateway, sol, Revisiones)
+    revisiones, costo = completar(gateway, sol, Revisiones)
+    return {etiquetas[r.finding_id]: r for r in revisiones.revisiones if r.finding_id in etiquetas}, costo
 
 
 # --- redactor ---------------------------------------------------------------------------------------------------------
@@ -286,7 +300,8 @@ SISTEMA_REDACTOR = (
     "Eres el redactor de solicitudes de acceso a la información pública (Ley 20.285, artículo 12). Escribe una "
     "solicitud corta y cordial al organismo indicado que identifique con claridad la información pedida, en formato "
     "reutilizable (planilla o CSV) cuando corresponda, y el órgano destinatario. Si mencionas un hecho de contexto, "
-    "cópialo literal de un hallazgo verificado y lístalo en afirmaciones con su finding_id. No escribas nombre, "
+    "cópialo literal de un hallazgo verificado y lístalo en afirmaciones con su etiqueta (h1, h2…) como finding_id. "
+    "No escribas nombre, "
     "correo ni firma del solicitante: pon exactamente " + MARCA_SOLICITANTE + " donde van (el sistema los agrega)."
 )
 
@@ -298,21 +313,18 @@ def redactar_solicitud(
     if org is None:
         raise AgenteError(f"organismo desconocido: {organismo}")
     hallazgos = herramientas.get_findings(herramientas.Contexto(conn, investigation_id), "redactor")
-    texto = "\n".join(
-        f"[hallazgo {h['finding_id']}] ({h['hipotesis']}, {h['tipo']}) {h['enunciado']}" for h in hallazgos
-    )
+    etiquetas = {f"h{i}": h["finding_id"] for i, h in enumerate(hallazgos, 1)}
+    texto = "\n".join(f"[h{i}] ({h['hipotesis']}, {h['tipo']}) {h['enunciado']}" for i, h in enumerate(hallazgos, 1))
     sol = Solicitud(
         rol="redactor",
         sistema=SISTEMA_REDACTOR,
-        documentos=[
-            Documento(capture_id=f"hallazgos:{investigation_id}", texto=texto or "(sin hallazgos verificados)")
-        ],
+        documentos=[Documento(capture_id="hallazgos", texto=texto or "(sin hallazgos verificados)")],
         instruccion=f"Organismo destinatario: {org[1]}. Qué pedir: {pedido}. Devuelve el borrador como JSON.",
         esquema=_esquema(Borrador),
         max_tokens=4000,
     )
     borrador, costo = completar(gateway, sol, Borrador)
-    return borrador, {"organization_id": str(org[0]), "verificados": {h["finding_id"] for h in hallazgos}}, costo
+    return borrador, {"organization_id": str(org[0]), "verificados": etiquetas}, costo
 
 
 def bloque_solicitante(solicitante: dict[str, str]) -> str:
@@ -370,7 +382,7 @@ def guardar_borrador(
                 "INSERT INTO request_claim (created_by, request_id, finding_id, texto) "
                 "VALUES ('agent:redactor', %s, %s, %s) "
                 "ON CONFLICT DO NOTHING",
-                (rid, a.finding_id, a.texto),
+                (rid, aux["verificados"][a.finding_id], a.texto),
             )
         auditoria.registrar(
             worker, "agent:redactor", "borrador.crear", f"request/{rid}", {"afirmaciones": len(borrador.afirmaciones)}
