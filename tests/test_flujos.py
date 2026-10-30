@@ -243,3 +243,22 @@ def test_inventario_marca_cada_dominio_con_evidencia(worker):
         "SELECT count(*) FROM source_domain WHERE estado = 'verificada' AND capture_id IS NULL AND cliente = 'capture'"
     ).fetchone()[0]
     assert sin_evidencia == 0
+
+
+def test_una_captura_bloqueada_por_datos_personales_no_detiene_la_lectura(worker, monkeypatch):
+    """Visto en la primera corrida real: un Bloqueada del gateway cortaba toda la tarea read_captures."""
+    pg = worker.pg
+    inv = str(_villarrica(pg.su))
+    leidas = []
+
+    def leer(w, v, gw, cid, estrategia="json"):
+        leidas.append(cid)
+        if len(leidas) == 1:
+            raise gateway.Bloqueada("el prompt aún contiene datos personales: no se envía")
+        return {"card_id": "x"}
+
+    monkeypatch.setattr(flujos.lector, "pendientes", lambda w, limite, investigation_id: ["a", "b", "c"])
+    monkeypatch.setattr(flujos.lector, "leer", leer)
+    salidas, _ = _resultado(DBOS.start_workflow(flujos.flujo_leer, inv).workflow_id)
+    assert leidas == ["a", "b", "c"]
+    assert salidas[0]["error"].startswith("Bloqueada") and salidas[1] == {"card_id": "x"}

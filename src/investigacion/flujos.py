@@ -22,7 +22,7 @@ import structlog
 from dbos import DBOS
 from psycopg.types.json import Jsonb
 
-from investigacion import agentes, auditoria, descubrimiento, herramientas, lector
+from investigacion import agentes, auditoria, descubrimiento, gateway, herramientas, lector
 from investigacion.buscador import Buscador
 
 log = structlog.get_logger()
@@ -35,7 +35,7 @@ MAX_ESPERA_CAPTURAS = 90  # ~30 minutos
 # Versión fija de los flujos: por defecto DBOS usa un hash del código y un despliegue dejaría huérfano un plan que
 # espera la aprobación de Daniel (días). Subirla SOLO si cambia el orden o el nombre de los pasos de un flujo: los
 # flujos en curso con la versión anterior quedan sin retomar (se vuelve a pedir el plan).
-VERSION_FLUJOS = "fase2-2"
+VERSION_FLUJOS = "fase2-1"  # 2026-10-30: flujo_descubrir cambió, pero ningún flujo estaba dentro de él
 
 
 @dataclass
@@ -541,8 +541,10 @@ def paso_leer(capture_id: str) -> dict:
     with _worker() as w, _verif() as v:
         try:
             return lector.leer(w, v, _env().gateway, capture_id)
-        except (lector.LectorError, lector.CapturaAislada) as e:
-            return {"capture": capture_id, "error": str(e)}
+        except (lector.LectorError, lector.CapturaAislada, gateway.Bloqueada, gateway.Rechazo) as e:
+            # Una captura bloqueada (p. ej. un dato personal residual: el gateway falla cerrado) no detiene la lectura
+            # de las demás; queda registrada en la salida de la tarea y en llm_call.
+            return {"capture": capture_id, "error": f"{type(e).__name__}: {e}"}
 
 
 @DBOS.workflow()
