@@ -216,6 +216,12 @@ def decidir(
             {"visto": hash_visto, "actual": obj.hash},
         )
         raise ContenidoCambiado("el contenido cambió desde que lo abriste: revísalo de nuevo")
+    if obj.tipo == "request" and decision == "aprobada":
+        f = conn.execute("SELECT contact_id, cuerpo FROM request WHERE id = %s", (obj.id,)).fetchone()
+        if f is None or f[0] is None:
+            raise ContenidoCambiado("Falta el canal: confirma primero el canal de transparencia del organismo.")
+        if "[NOMBRE DEL SOLICITANTE]" in f[1] or "[CORREO PARA NOTIFICACIONES]" in f[1]:
+            raise ContenidoCambiado("Faltan tus datos de solicitante: el borrador se actualiza solo al configurarlos.")
     with conn.transaction():
         aid = str(
             conn.execute(

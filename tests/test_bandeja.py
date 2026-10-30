@@ -2,7 +2,6 @@
 
 import re
 
-import pyotp
 from psycopg.types.json import Jsonb
 
 from investigacion import auditoria
@@ -10,10 +9,10 @@ from tests.test_fase2_esquema import _captura, _org, _villarrica
 from tests.test_web import _codigo, _csrf, _entrar
 
 
-def _codigo_nuevo(sitio):
-    """Simula que pasó una ventana de 30 s desde el último código usado."""
+def _codigo_nuevo(sitio, desplazamiento=0):
+    """Simula que pasó una ventana de 30 s desde el último código usado (desplazamiento: otra ventana válida ±1)."""
     sitio.pg.su.execute("UPDATE app_user SET totp_ultimo_paso = 0")
-    return pyotp.TOTP(sitio.secreto).now()
+    return _codigo(sitio, desplazamiento)
 
 
 def _plan(sitio, contenido=None, anterior=None):
@@ -148,3 +147,80 @@ def test_no_se_pide_un_segundo_plan_mientras_hay_uno_en_curso(sitio):
     assert sitio.c.post(f"/investigaciones/{inv}/plan", data={"csrf": _csrf(sitio)}).status_code == 303
     assert sitio.c.post(f"/investigaciones/{inv}/plan", data={"csrf": _csrf(sitio)}).status_code == 409
     assert sitio.pg.su.execute("SELECT count(*) FROM plan_request").fetchone()[0] == 1
+
+
+def _borrador(
+    sitio,
+    contacto=None,
+    cuerpo="Solicito información.\n\n[NOMBRE DEL SOLICITANTE]\nCorreo para notificaciones: [CORREO PARA NOTIFICACIONES]",
+):
+    su = sitio.pg.su
+    return (
+        sitio.pg.conectar("inv_worker")
+        .execute(
+            "INSERT INTO request (created_by, investigation_id, organization_id, contact_id, asunto, cuerpo) "
+            "VALUES ('agent:redactor', %s, %s, %s, 'Solicitud', %s) RETURNING id::text, content_hash",
+            (_villarrica(su), _org(su), contacto, cuerpo),
+        )
+        .fetchone()
+    )
+
+
+def _contacto_confirmado(sitio):
+    su = sitio.pg.su
+    cap, _ = _captura(su, _villarrica(su))
+    cid, h = (
+        sitio.pg.conectar("inv_worker")
+        .execute(
+            "INSERT INTO organization_contact (created_by, organization_id, canal, correo, tipo, capture_id, cita) "
+            "VALUES ('agent:investigador',%s,'correo','transparencia@munivillarrica.cl','transparencia',%s,'x') "
+            "RETURNING id::text, content_hash",
+            (_org(su), cap),
+        )
+        .fetchone()
+    )
+    assert _decidir(sitio, "organization_contact", cid, h, _codigo_nuevo(sitio, -1)).status_code == 303
+    return cid
+
+
+def test_el_worker_completa_canal_y_solicitante_sin_modelo_y_el_envio_manual_consume_la_aprobacion(sitio):
+    from investigacion import agentes
+
+    _entrar(sitio)
+    rid, h = _borrador(sitio)
+    r = _decidir(sitio, "request", rid, h, _codigo(sitio, 1))
+    assert r.status_code == 409 and "canal" in r.text  # sin canal no se aprueba
+    contacto = _contacto_confirmado(sitio)
+    w = sitio.pg.conectar("inv_worker")
+    solicitante = {"nombre": "Nombre De Prueba", "correo": "prueba@ejemplo.cl"}
+    (nuevo,) = agentes.actualizar_borradores(w, solicitante)
+    assert agentes.actualizar_borradores(w, solicitante) == []  # idempotente
+    fila = sitio.pg.su.execute(
+        "SELECT contact_id::text, cuerpo, anterior_id::text, content_hash FROM request WHERE id = %s", (nuevo,)
+    ).fetchone()
+    assert fila[0] == contacto and "Nombre De Prueba" in fila[1] and "[NOMBRE" not in fila[1] and fila[2] == rid
+    bandeja = sitio.c.get("/aprobaciones").text
+    assert nuevo in bandeja and f"/aprobaciones/request/{rid}" not in bandeja
+    assert _decidir(sitio, "request", nuevo, fila[3], _codigo_nuevo(sitio)).status_code == 303
+    html = sitio.c.get(f"/aprobaciones/request/{nuevo}").text
+    assert "transparencia@munivillarrica.cl" in html and "Registrar envío manual" in html
+    assert sitio.c.post(f"/solicitudes/{nuevo}/enviada", data={"csrf": _csrf(sitio)}).status_code == 303
+    assert sitio.pg.su.execute("SELECT estado, enviada_por FROM request WHERE id = %s", (nuevo,)).fetchone() == (
+        "enviada",
+        "manual",
+    )
+    assert sitio.pg.su.execute("SELECT used_by FROM approval WHERE objeto_id = %s", (nuevo,)).fetchone()[0] == "daniel"
+    assert sitio.c.post(f"/solicitudes/{nuevo}/enviada", data={"csrf": _csrf(sitio)}).status_code == 409  # uso único
+
+
+def test_no_se_registra_un_envio_sin_aprobacion_usada(sitio):
+    _entrar(sitio)
+    rid, _ = _borrador(sitio)
+    assert sitio.c.post(f"/solicitudes/{rid}/enviada", data={"csrf": _csrf(sitio)}).status_code == 409
+    import psycopg
+    import pytest
+
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):  # ni saltándose la web
+        sitio.pg.su.execute(
+            "UPDATE request SET estado = 'enviada', enviada_at = now(), enviada_por = 'manual' WHERE id = %s", (rid,)
+        )

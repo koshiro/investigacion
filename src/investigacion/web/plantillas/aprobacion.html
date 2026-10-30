@@ -13,6 +13,27 @@
 <h2>Contenido exacto que apruebas</h2>
 <pre class="texto">{{ obj.contenido }}</pre>
 
+{% if envio and envio[0] in ("aprobada", "enviada") %}
+<h2>Envío desde tu correo</h2>
+{% if envio[0] == "enviada" %}
+<p class="ok">Enviada el {{ envio[1].strftime("%Y-%m-%d %H:%M") }} (registrada a mano).</p>
+{% elif not envio[2] %}
+<p class="alerta">Sin canal confirmado: confirma el canal de transparencia del organismo en la bandeja; el borrador
+se actualiza solo y hay que aprobar la versión nueva.</p>
+{% else %}
+<p>{% if envio[3] == "portal" %}Ingrésala en el formulario del Portal: <code>{{ envio[2] }}</code>{% else %}Para:
+<code>{{ envio[2] }}</code>{% endif %}</p>
+<p>Asunto: <code>{{ envio[4] }}</code></p>
+<pre class="texto">{{ envio[5] }}</pre>
+<p class="tenue">Envíala desde tu correo con este asunto y cuerpo exactos y luego regístrala: el envío consume la
+aprobación y fija la fecha para los plazos.</p>
+<form method="post" action="/solicitudes/{{ obj.id }}/enviada">
+  <input type="hidden" name="csrf" value="{{ s.csrf }}">
+  <button type="submit">Registrar envío manual</button>
+</form>
+{% endif %}
+{% endif %}
+
 {% if previas %}
 <h2>Decisiones anteriores</h2>
 <ul>{% for p in previas %}<li>{{ p[0].strftime("%Y-%m-%d %H:%M") }}: {{ p[1] }}{% if p[2] %} (usada {{ p[2].strftime("%Y-%m-%d %H:%M") }}){% endif %}{% if p[3] %} — {{ p[3] }}{% endif %}</li>{% endfor %}</ul>

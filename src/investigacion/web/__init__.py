@@ -374,7 +374,16 @@ def crear_app(cfg: Configuracion) -> FastAPI:
             "ORDER BY decided_at",
             (tipo, str(oid)),
         ).fetchall()
-        return render(request, "aprobacion.html", s, obj=obj, tipos=aprobaciones.TIPOS, previas=previas, error=None)
+        envio = None
+        if tipo == "request":
+            envio = conn.execute(
+                "SELECT r.estado, r.enviada_at, coalesce(k.correo, k.url_portal), k.canal, r.asunto, r.cuerpo "
+                "FROM request r LEFT JOIN organization_contact k ON k.id = r.contact_id WHERE r.id = %s",
+                (str(oid),),
+            ).fetchone()
+        return render(
+            request, "aprobacion.html", s, obj=obj, tipos=aprobaciones.TIPOS, previas=previas, error=None, envio=envio
+        )
 
     @app.post("/aprobaciones/{tipo}/{oid}", response_class=HTMLResponse)
     def decidir(
@@ -394,7 +403,9 @@ def crear_app(cfg: Configuracion) -> FastAPI:
         obj = _objeto(conn, tipo, oid)
 
         def error(msg: str, estado: int) -> HTMLResponse:
-            resp = render(request, "aprobacion.html", s, obj=obj, tipos=aprobaciones.TIPOS, previas=[], error=msg)
+            resp = render(
+                request, "aprobacion.html", s, obj=obj, tipos=aprobaciones.TIPOS, previas=[], error=msg, envio=None
+            )
             resp.status_code = estado
             return resp
 
@@ -423,6 +434,31 @@ def crear_app(cfg: Configuracion) -> FastAPI:
         except aprobaciones.ContenidoCambiado as e:
             return error(str(e), 409)
         return RedirectResponse("/aprobaciones", status_code=303)
+
+    @app.post("/solicitudes/{rid}/enviada")
+    def registrar_envio(rid: uuid.UUID, csrf: str = Form(), s=Depends(sesion), conn=Depends(conexion)):
+        """Daniel envió a mano desde su correo el contenido aprobado. Consume la aprobación (uso único)."""
+        csrf_ok(s, csrf)
+        f = conn.execute(
+            "SELECT r.content_hash, a.id FROM request r JOIN approval a ON a.objeto_tipo = 'request' "
+            "AND a.objeto_id = r.id AND a.decision = 'aprobada' AND a.used_at IS NULL WHERE r.id = %s "
+            "AND r.estado = 'aprobada'",
+            (str(rid),),
+        ).fetchone()
+        if f is None:
+            raise HTTPException(409, "La solicitud no está aprobada o su aprobación ya se usó.")
+        with conn.transaction():
+            motivo = conn.execute(
+                "SELECT approval_usar(%s, 'request', %s, %s, 'daniel')", (f[1], str(rid), f[0])
+            ).fetchone()[0]  # type: ignore[index]
+            if motivo is not None:
+                raise HTTPException(409, f"No se pudo usar la aprobación: {motivo}")
+            conn.execute(
+                "UPDATE request SET estado = 'enviada', enviada_at = now(), enviada_por = 'manual' WHERE id = %s",
+                (str(rid),),
+            )
+            auditoria.registrar(conn, "daniel", "solicitud.enviada_manual", f"request/{rid}", {"hash": f[0]})
+        return RedirectResponse(f"/aprobaciones/request/{rid}", status_code=303)
 
     # --- auditoría ------------------------------------------------------------------------------------------------
 
