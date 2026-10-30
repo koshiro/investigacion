@@ -68,7 +68,7 @@ CLAVE = "k" * 40
 PASSWORD = secrets.token_urlsafe(18)
 OTRA = secrets.token_urlsafe(18)
 NOMBRE = secrets.choice(["daniel"])
-CAMPOS = "usuario password codigo".split()  # noqa: SIM905  (sin literales juntos que GitGuardian lee como credencial)
+CAMPOS = "usuario password totp".split()  # noqa: SIM905  (sin literales juntos que GitGuardian lee como credencial)
 
 
 @pytest.fixture

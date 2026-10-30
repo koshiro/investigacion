@@ -27,7 +27,7 @@ def _reutilizar(conn: psycopg.Connection, cid, sha: str) -> bool:
     Las filas se insertan nuevas (nada se modifica); el hash ya se verificó cuando se extrajo la primera vez."""
     previa = conn.execute(
         "SELECT e.id, e.extractor, e.idioma, e.texto, e.paginas, p.version, p.hallazgos, p.nivel, p.texto_redactado, "
-        "p.mapa, p.paginas_redactadas FROM extraction e JOIN pii_scan p ON p.extraction_id = e.id "
+        "p.mapa, p.paginas_redactadas, e.enlaces FROM extraction e JOIN pii_scan p ON p.extraction_id = e.id "
         "JOIN capture c ON c.id = e.capture_id WHERE c.sha256 = %s AND c.id <> %s AND e.extractor <> ALL(%s) "
         "ORDER BY e.created_at DESC, p.created_at DESC LIMIT 1",
         (sha, cid, list(EXTRACTORES_OBSOLETOS)),
@@ -36,9 +36,9 @@ def _reutilizar(conn: psycopg.Connection, cid, sha: str) -> bool:
         return False
     with conn.transaction():
         eid = conn.execute(
-            "INSERT INTO extraction (created_by, capture_id, extractor, idioma, texto, paginas) "
-            "VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
-            (ACTOR, cid, previa[1], previa[2], previa[3], Jsonb(previa[4])),
+            "INSERT INTO extraction (created_by, capture_id, extractor, idioma, texto, paginas, enlaces) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+            (ACTOR, cid, previa[1], previa[2], previa[3], Jsonb(previa[4]), Jsonb(previa[11])),
         ).fetchone()[0]  # type: ignore[index]
         conn.execute(
             "INSERT INTO pii_scan (created_by, extraction_id, version, hallazgos, nivel, texto_redactado, mapa, "
@@ -156,9 +156,9 @@ def procesar_capturas(
         ]
         with conn.transaction():
             eid = conn.execute(
-                "INSERT INTO extraction (created_by, capture_id, extractor, idioma, texto, paginas) "
-                "VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
-                (ACTOR, cid, e.extractor, e.idioma, e.texto, Jsonb(paginas_orig)),
+                "INSERT INTO extraction (created_by, capture_id, extractor, idioma, texto, paginas, enlaces) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+                (ACTOR, cid, e.extractor, e.idioma, e.texto, Jsonb(paginas_orig), Jsonb(e.enlaces)),
             ).fetchone()[0]  # type: ignore[index]
             pid = conn.execute(
                 "INSERT INTO pii_scan (created_by, extraction_id, version, hallazgos, nivel, texto_redactado, mapa, "

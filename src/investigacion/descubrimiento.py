@@ -120,6 +120,75 @@ def candidatos_de_texto(
     return list(salida.values())
 
 
+# --- enlaces de páginas oficiales (medido el 2026-10-29: la búsqueda web gratuita no sirve de base) -------------------
+
+_SEGUIR = re.compile(
+    r"(?i)solicitud(?:es)?\s+de\s+(?:acceso|informaci)|acceso\s+a\s+la\s+informaci|transparencia|"
+    r"canales?\s+de\s+recepci|oirs|contacto|ley\s*(?:n[°º.]?\s*)?20[.\s]?285"
+)
+_PRIORIDAD = re.compile(r"(?i)solicitud|acceso a la informaci|canales? de recepci|pasiva|20[.\s]?285")
+_SAI = re.compile(
+    r"(?i)solicitud(?:es)?\s+de\s+acceso|solicitar\s+informaci|acceso\s+a\s+la\s+informaci|"
+    r"transparencia\s+pasiva|solicitud\s+de\s+informaci"
+)
+MAX_SEGUIR = 6
+
+
+def absolutos(enlaces: list[dict], url_pagina: str) -> list[dict]:
+    """[{href, texto}] crudos de `extract` → [{url, texto}] absolutos, sin fragmento y solo http(s)."""
+    from urllib.parse import urldefrag, urljoin
+
+    salida, vistos = [], set()
+    for e in enlaces:
+        url = urldefrag(urljoin(url_pagina, e.get("href") or e.get("url", ""))).url
+        if url.startswith(("https://", "http://")) and url not in vistos:
+            vistos.add(url)
+            salida.append({"url": url, "texto": e.get("texto", "")})
+    return salida
+
+
+def enlaces_a_seguir(enlaces: list[dict], dominios_org: list[str], ya: set[str]) -> list[str]:
+    """Enlaces de la MISMA organización (dominio oficial) que suenan a transparencia o solicitudes, priorizados."""
+    elegidos = []
+    for e in enlaces:
+        url, texto = e.get("url", ""), e.get("texto", "")
+        if url in ya or not _en(dominio_de(url), dominios_org) or not _SEGUIR.search(f"{texto} {url}"):
+            continue
+        elegidos.append((0 if _PRIORIDAD.search(f"{texto} {url}") else 1, url))
+    vistos: list[str] = []
+    for _, u in sorted(elegidos):
+        if u not in vistos:
+            vistos.append(u)
+    return vistos[:MAX_SEGUIR]
+
+
+def candidatos_de_enlaces(texto: str, enlaces: list[dict], url_pagina: str, dominios_org: list[str]) -> list[Candidato]:
+    """La página oficial enlaza el formulario de solicitudes del Portal: canal `portal`, con el ancla como cita.
+    Un enlace sin id de organismo (`idOrg=undefined`) queda en `revisar`."""
+    pagina = dominio_de(url_pagina)
+    if not _en(pagina, dominios_org):
+        return []
+    salida: dict[str, Candidato] = {}
+    for e in enlaces:
+        url, ancla = e.get("url", ""), e.get("texto", "").strip()
+        if dominio_de(url) != PORTAL or "ingreso-sai" not in url.lower() or not _SAI.search(ancla):
+            continue
+        if url in salida or len(ancla) < 8 or ancla not in texto:  # la cita debe estar literal en la captura
+            continue
+        org_id = re.search(r"(?i)idOrg=([^&]+)", url)
+        con_id = bool(org_id and org_id.group(1).lower() not in ("undefined", "null", ""))
+        validacion = {
+            "pagina_oficial": True,
+            "pagina": pagina,
+            "literal_en_captura": True,
+            "enlace_al_portal": True,
+            "id_organismo": con_id,
+            "dominio_correo": con_id,
+        }  # sin id: Daniel revisa
+        salida[url] = Candidato("portal", None, url, "portal", ancla, validacion)
+    return list(salida.values())
+
+
 ORDEN = {"transparencia": 0, "portal": 1, "oirs": 2, "contacto_general": 3}
 
 

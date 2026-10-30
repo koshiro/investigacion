@@ -88,8 +88,9 @@ def crear_app(cfg: Configuracion) -> FastAPI:
 
     @app.post("/login")
     def login(
-        request: Request, usuario: str = Form(), password: str = Form(), codigo: str = Form(), conn=Depends(conexion)
+        request: Request, usuario: str = Form(), password: str = Form(), totp: str = Form(), conn=Depends(conexion)
     ):
+        codigo = totp
         ip = request.client.host if request.client else "?"
         claves = (f"u:{usuario}", f"ip:{ip}")
         if any(cfg.limitador.bloqueado(c) for c in claves):
@@ -223,6 +224,17 @@ def crear_app(cfg: Configuracion) -> FastAPI:
     @app.post("/investigaciones/{iid}/plan")
     def pedir_plan(iid: uuid.UUID, csrf: str = Form(), s=Depends(sesion), conn=Depends(conexion)):
         csrf_ok(s, csrf)
+        # Un plan a la vez por investigación: un doble clic no debe proponer (y cobrar) dos planes.
+        en_curso = conn.execute(
+            "SELECT 1 FROM plan_request r WHERE r.investigation_id = %(i)s AND (r.iniciado_at IS NULL "
+            "OR NOT EXISTS (SELECT 1 FROM plan p WHERE p.workflow_id = r.workflow_id) "
+            "OR EXISTS (SELECT 1 FROM plan p JOIN task t ON t.plan_id = p.id WHERE p.workflow_id = r.workflow_id "
+            "AND t.estado IN ('propuesta', 'en_curso') AND NOT EXISTS (SELECT 1 FROM approval a "
+            "WHERE a.objeto_tipo = 'plan' AND a.objeto_id = p.id AND a.decision = 'rechazada')))",
+            {"i": str(iid)},
+        ).fetchone()
+        if en_curso:
+            raise HTTPException(409, "Ya hay un plan pedido o en curso para esta investigación.")
         pid = conn.execute(
             "INSERT INTO plan_request (created_by, investigation_id) VALUES ('daniel', %s) RETURNING id", (str(iid),)
         ).fetchone()[0]  # type: ignore[index]
@@ -371,8 +383,9 @@ def crear_app(cfg: Configuracion) -> FastAPI:
         oid: uuid.UUID,
         content_hash: str = Form(min_length=64, max_length=64),
         decision: str = Form(pattern="^(aprobada|rechazada)$"),
-        codigo: str = Form(max_length=10),
+        totp: str = Form(max_length=10),
         comentario: str = Form("", max_length=2000),
+        usuario: str = Form("", max_length=100),  # solo para que el gestor de contraseñas asocie el código
         csrf: str = Form(),
         s=Depends(sesion),
         conn=Depends(conexion),
@@ -390,7 +403,7 @@ def crear_app(cfg: Configuracion) -> FastAPI:
             return error("Demasiados códigos incorrectos. Espera unos minutos.", 429)
         # TOTP en CADA aprobación: un código nuevo (paso posterior al último usado, también al del login).
         ultimo = conn.execute("SELECT totp_ultimo_paso FROM app_user WHERE id = %s", (s["id"],)).fetchone()[0]  # type: ignore[index]
-        paso = auth.paso_totp(cfg.totp_secreto, codigo, ultimo)
+        paso = auth.paso_totp(cfg.totp_secreto, totp, ultimo)
         if (
             paso is None
             or conn.execute(

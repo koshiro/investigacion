@@ -26,7 +26,7 @@ def _plan(sitio, contenido=None, anterior=None):
 
 
 def _decidir(sitio, tipo, oid, h, codigo, decision="aprobada"):
-    datos = {"content_hash": h, "decision": decision, "codigo": codigo, "csrf": _csrf(sitio)}
+    datos = {"content_hash": h, "decision": decision, "totp": codigo, "csrf": _csrf(sitio)}
     return sitio.c.post(f"/aprobaciones/{tipo}/{oid}", data=datos)
 
 
@@ -40,6 +40,8 @@ def test_el_plan_aparece_con_su_contenido_exacto_y_su_hash(sitio):
     assert f"/aprobaciones/plan/{pid}" in sitio.c.get("/aprobaciones").text
     html = sitio.c.get(f"/aprobaciones/plan/{pid}").text
     assert h in html and "&#34;objetivo&#34;: &#34;leer&#34;" in html
+    # Usuario y TOTP en el mismo formulario: el gestor de contraseñas propone el código de esa cuenta.
+    assert 'autocomplete="username" value="daniel"' in html and 'id="totp" name="totp"' in html
 
 
 def test_aprobar_exige_un_totp_nuevo_cada_vez(sitio):
@@ -138,3 +140,11 @@ def test_tipo_desconocido_o_id_invalido(sitio):
     assert sitio.c.get("/aprobaciones/proxy_domain/00000000-0000-0000-0000-000000000000").status_code == 404
     assert sitio.c.get("/aprobaciones/plan/no-es-uuid").status_code == 422
     assert sitio.c.get("/aprobaciones").status_code == 200
+
+
+def test_no_se_pide_un_segundo_plan_mientras_hay_uno_en_curso(sitio):
+    _entrar(sitio)
+    inv = _villarrica(sitio.pg.su)
+    assert sitio.c.post(f"/investigaciones/{inv}/plan", data={"csrf": _csrf(sitio)}).status_code == 303
+    assert sitio.c.post(f"/investigaciones/{inv}/plan", data={"csrf": _csrf(sitio)}).status_code == 409
+    assert sitio.pg.su.execute("SELECT count(*) FROM plan_request").fetchone()[0] == 1

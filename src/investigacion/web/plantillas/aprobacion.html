@@ -23,7 +23,11 @@
   <input type="hidden" name="csrf" value="{{ s.csrf }}">
   <input type="hidden" name="content_hash" value="{{ obj.hash }}">
   <label>Comentario (opcional)<textarea name="comentario" maxlength="2000" rows="3"></textarea></label>
-  <label>Código TOTP<input name="codigo" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" required></label>
+  <!-- El gestor de contraseñas asocia el código a la cuenta por el campo de usuario del mismo formulario. -->
+  <label for="username">Usuario</label>
+  <input id="username" name="usuario" type="text" autocomplete="username" value="{{ s.nombre }}" readonly>
+  <label for="totp">Código de verificación (TOTP)</label>
+  <input id="totp" name="totp" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required>
   <div class="en-fila">
     <button type="submit" name="decision" value="aprobada">Aprobar</button>
     <button type="submit" name="decision" value="rechazada">Rechazar</button>
