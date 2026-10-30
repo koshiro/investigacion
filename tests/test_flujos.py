@@ -72,7 +72,7 @@ def worker(pg, monkeypatch):
     fake = FakeAnthropic(texto(json.dumps(PLAN)))
     modelos = {r: "claude-sonnet-5-5" for r in ("lector", "investigador", "redactor", "verificador")}
     gw = gateway.Gateway(fake, pg.conectar("inv_gateway"), modelos)
-    resultados = {"results": [{"title": "Transparencia", "url": "https://www.villarrica.cl/transparencia"}]}
+    resultados = {"results": [{"title": "Transparencia", "url": "https://www.munivillarrica.cl/transparencia"}]}
     busc = Buscador(
         "http://searxng:8080", transport=httpx.MockTransport(lambda r: httpx.Response(200, json=resultados))
     )
@@ -180,7 +180,7 @@ def _simular_capturas(pg, parar: threading.Event, texto_de):
 def test_descubrimiento_propone_el_canal_con_su_captura_y_cita(worker):
     pg = worker.pg
     inv = str(_villarrica(pg.su))
-    pagina = "Solicitudes de acceso a la información (Ley 20.285): transparencia@villarrica.cl"
+    pagina = "Solicitudes de acceso a la información (Ley 20.285): transparencia@munivillarrica.cl"
     parar = threading.Event()
     hilo = threading.Thread(target=_simular_capturas, args=(pg, parar, lambda url: pagina), daemon=True)
     hilo.start()
@@ -188,9 +188,12 @@ def test_descubrimiento_propone_el_canal_con_su_captura_y_cita(worker):
         salida = _resultado(DBOS.start_workflow(flujos.flujo_descubrir, inv, "Municipalidad de Villarrica").workflow_id)
     finally:
         parar.set()
-    assert salida["urls"] == ["https://www.villarrica.cl/transparencia"]
+    assert salida["urls"] == [  # primero la ficha conocida del Portal, luego lo encontrado en dominios oficiales
+        "https://www.portaltransparencia.cl/PortalPdT/pdtta/-/ta/MU339",
+        "https://www.munivillarrica.cl/transparencia",
+    ]
     k = pg.su.execute("SELECT correo, tipo, estado, cita, capture_id FROM organization_contact").fetchall()
-    assert [(c, t, e) for c, t, e, _, _ in k] == [("transparencia@villarrica.cl", "transparencia", "candidato")]
+    assert [(c, t, e) for c, t, e, _, _ in k] == [("transparencia@munivillarrica.cl", "transparencia", "candidato")]
     assert k[0][3] in pagina and k[0][4] is not None
     # Queda pendiente de Daniel en la bandeja.
     assert any(t == "organization_contact" for t, _, _ in aprobaciones.pendientes(pg.conectar("inv_web")))

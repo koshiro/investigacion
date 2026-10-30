@@ -64,7 +64,8 @@ class Buscador:
         r = self._c.get(
             "/search",
             params={"q": c, "format": "json", "language": "es-CL", "safesearch": 1, "pageno": 1},
-            headers={"Accept": "application/json"},
+            # SearXNG registra un error por consulta sin X-Real-IP (botdetection); el limitador está apagado.
+            headers={"Accept": "application/json", "X-Real-IP": "127.0.0.1"},
         )
         r.raise_for_status()
         origen = origen_de(c)
